@@ -2,25 +2,14 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import type { Session } from "@opencode-ai/sdk/v2"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import { searchSessions } from "./search/search"
 
 const PLUGIN_ID = "local.smart-session-picker"
-
-async function searchSessions(api: TuiPluginApi, query: string): Promise<Session[]> {
-  const response = await api.client.session.list({
-    roots: true,
-    search: query.trim() || undefined,
-  })
-
-  if (response.error) {
-    throw new Error(typeof response.error === "string" ? response.error : "Failed to list sessions")
-  }
-
-  return response.data ?? []
-}
 
 function SmartSessionDialog(props: { api: TuiPluginApi }) {
   const [query, setQuery] = createSignal("")
   const [sessions, setSessions] = createSignal<Session[]>([])
+  const [diagnostics, setDiagnostics] = createSignal<string[]>([])
   const [loading, setLoading] = createSignal(true)
   const [error, setError] = createSignal<string>()
   let request = 0
@@ -34,7 +23,8 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
     try {
       const result = await searchSessions(props.api, nextQuery)
       if (id !== request) return
-      setSessions(result)
+      setSessions(result.sessions)
+      setDiagnostics(result.diagnostics.map((diagnostic) => diagnostic.message))
       setLoading(false)
     } catch (err) {
       if (id !== request) return
@@ -84,10 +74,22 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
     const rows = sessions().map((session) => ({
       title: session.title,
       value: session.id,
+      category:
+        new Date(session.time.updated).toDateString() === new Date().toDateString()
+          ? "Today"
+          : new Date(session.time.updated).toDateString(),
+      footer: session.path ?? session.directory,
     }))
-    if (rows.length) return rows
+    const statusRows = diagnostics().map((description, index) => ({
+      title: "Search status",
+      description,
+      value: `__diagnostic_${index}__`,
+      disabled: true,
+    }))
+    if (rows.length) return [...statusRows, ...rows]
 
     return [
+      ...statusRows,
       {
         title: query() ? "No matching sessions" : "No sessions found",
         value: "__empty__",
@@ -102,6 +104,11 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
       placeholder="Search sessions..."
       options={options()}
       skipFilter={true}
+      current={
+        props.api.route.current.name === "session" && props.api.route.current.params
+          ? String(props.api.route.current.params.sessionID)
+          : undefined
+      }
       onFilter={setQuery}
       onSelect={(option) => {
         if (option.disabled) return

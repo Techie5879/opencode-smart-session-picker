@@ -1,10 +1,34 @@
 # opencode-smart-session-picker
 
-Prototype OpenCode TUI plugin that shadows the built-in `session.list` command used by `Ctrl-X L`.
+Prototype OpenCode TUI plugin that replaces the built-in session picker opened
+with `Ctrl-X` then `L`.
 
-This version still uses OpenCode's normal session API, so search is title-based. The important part is the hook: the plugin registers its own hidden command with `value: "session.list"` and `keybind: "session_list"`. Because TUI plugin command registrations are prepended, this should win over the built-in picker in normal TUI contexts.
+It adds a smarter local search path for finding past OpenCode sessions while
+leaving your OpenCode sessions, config, and navigation in OpenCode itself. The
+local search index is disposable and can be rebuilt from OpenCode data.
 
-## Install Locally
+## Features
+
+- Replaces the normal OpenCode session picker shortcut: `Ctrl-X` then `L`.
+- Searches session titles, paths, and indexed transcript snippets.
+- Uses a local SQLite search index for fast keyword search.
+- Can use `fzf` for fuzzy ranking when requested.
+- Keeps working with OpenCode's normal session search if the local index is not
+  ready yet.
+- Shows non-blocking status rows when indexing or optional dependencies are not
+  available.
+- Includes an isolated dev launcher for trying the plugin without touching your
+  real OpenCode config or state.
+
+## Requirements
+
+- Bun for installing dependencies and running checks.
+- OpenCode with TUI plugin support.
+- Optional: `fzf` for `fzf` search mode.
+- Optional: `llama-server` and a local embedding model for vector-search
+  experiments.
+
+## Install
 
 From this repo:
 
@@ -12,16 +36,7 @@ From this repo:
 bun install
 ```
 
-Useful checks:
-
-```bash
-bun run typecheck
-bun run test
-```
-
-`bun run test` currently runs the repo check suite. `bunfig.toml` also scopes bare Bun test discovery away from OpenCode/OpenTUI reference submodules in `upstream/`.
-
-Add it to `~/.config/opencode/tui.json`:
+Add the plugin to `~/.config/opencode/tui.json`:
 
 ```json
 {
@@ -32,54 +47,63 @@ Add it to `~/.config/opencode/tui.json`:
 
 Restart `opencode`, then press `Ctrl-X` followed by `L`.
 
-## Where Hybrid Search Goes
+## Search Modes
 
-The replacement point is `searchSessions` in `src/tui.tsx`. Swap that function to query a local index/vector store, then map results back into `TuiDialogSelectOption<string>` rows.
+The default mode is `hybrid`, which currently uses the local SQLite keyword
+index and falls back to OpenCode session search when needed.
 
-Expected next steps:
+To use another mode for a run:
 
-- Add an indexer that watches/session-syncs OpenCode storage.
-- Store title, timestamps, session id, and message/content embeddings.
-- Replace title-only SDK search with hybrid retrieval.
-- Add delete and rename key actions once the base picker hook is proven.
+```bash
+OPENCODE_SMART_PICKER_SEARCH_MODE=fzf opencode /path/to/workspace
+```
 
-## Type Boundaries
+Available modes:
 
-OpenCode is the source of truth. Use types exported by OpenCode packages for
-OpenCode-owned data:
+- `hybrid`: default local search mode.
+- `fzf`: ranks sessions with an installed `fzf` executable.
 
-- TUI/plugin API types from `@opencode-ai/plugin/tui`.
-- Session/message/part/config types from `@opencode-ai/sdk/v2` when available.
+Useful environment variables:
 
-Only define local types for plugin-owned concepts, such as sidecar DB rows,
-search documents, ranked search results, dependency health, and picker UI state.
-Do not duplicate OpenCode session/message/part shapes in this repo.
+```bash
+OPENCODE_SMART_PICKER_SEARCH_MODE=hybrid # or fzf
+OPENCODE_SMART_PICKER_HYBRID_ALPHA=0.5
+OPENCODE_SMART_PICKER_SEARCH_DB=/path/to/opencode-search.db
+OPENCODE_SMART_PICKER_SOURCE_DB=/path/to/opencode.db
+OPENCODE_SMART_PICKER_FZF_BIN=/path/to/fzf
+OPENCODE_SMART_PICKER_EMBED_BASE_URL=http://127.0.0.1:8081
+OPENCODE_SMART_PICKER_EMBED_MODEL=nomic-embed-text-v1.5
+OPENCODE_SMART_PICKER_DISABLE_VECTOR=1
+```
 
-## Semantic Search Setup Plan
+`OPENCODE_SMART_PICKER_HYBRID_ALPHA` is a ranking weight between `0` and `1`.
+Changing it does not rebuild the local index.
 
-The sidecar search index is optional and derived. Fresh installs and upgrades
-must keep the picker usable even when the sidecar, vector extension, or embedding
-server is missing.
+## fzf Mode
 
-Fresh install behavior:
+Install `fzf` through your package manager:
 
-- `bun install` is enough for the current title-based picker.
-- On first semantic-search run, create `opencode-search.db` outside OpenCode's
-  DB and run idempotent sidecar migrations.
-- Build FTS rows first so search works without model setup.
-- Use vector search only after `sqlite-vec` loads and the embedding server
-  passes a health/smoke test.
-- Do not download model weights automatically from the TUI.
+```bash
+brew install fzf
+```
 
-Existing install behavior:
+Check that it works:
 
-- Read sidecar `index_meta` before querying vectors.
-- Migrate compatible schema versions in place.
-- Rebuild the sidecar when schema/extractor metadata is incompatible.
-- Rebuild vectors when embedding model, dimensions, or prefixes change.
-- Fall back to FTS/OpenCode API search if the embedding server is unavailable.
+```bash
+fzf --version
+printf 'alpha\nbeta\n' | fzf --filter a
+```
+
+Then run OpenCode with:
+
+```bash
+OPENCODE_SMART_PICKER_SEARCH_MODE=fzf opencode /path/to/workspace
+```
 
 ## Optional Local Embeddings
+
+The picker does not require a local embedding server. For vector-search
+experiments, use a local `llama-server` embedding endpoint.
 
 Recommended model: `nomic-ai/nomic-embed-text-v1.5-GGUF`.
 
@@ -108,25 +132,37 @@ llama-server \
   --port 8081
 ```
 
-Minimal checks:
+Smoke test:
 
 ```bash
-bun install
-bun run typecheck
-llama-server --help
 curl http://127.0.0.1:8081/health
 curl http://127.0.0.1:8081/v1/embeddings \
   -H "Content-Type: application/json" \
   -d '{"input":"search_query: test","model":"nomic-embed-text-v1.5","encoding_format":"float"}'
 ```
 
-For disposable OpenCode plugin testing:
+## Disposable Testing
+
+Use the dev launcher to test against upstream OpenCode without changing your
+real OpenCode config, data, state, or cache:
 
 ```bash
+bun install
 bun install --cwd upstream/opencode
 bun run dev:opencode -- <workspace>
 ```
 
-Omit `<workspace>` to open OpenCode against this repo. The dev launcher must
-keep all disposable OpenCode config, data, state, cache, and sidecar files under
-`.opencode-dev/`.
+Omit `<workspace>` to open OpenCode against this repo.
+
+The dev launcher writes under `.opencode-dev/` and uses an isolated OpenCode
+home. It intentionally will not show your real OpenCode sessions.
+
+## Checks
+
+```bash
+bun run typecheck
+bun run test
+```
+
+`bun run test` runs the repo check suite. `bunfig.toml` scopes bare Bun test
+discovery away from the reference submodules in `upstream/`.

@@ -10,7 +10,7 @@
   "scripts": {
     "dev:opencode": "bun run scripts/dev-opencode.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun run typecheck"
+    "test": "bun run typecheck && bun test test/integration"
   },
   "dependencies": {
     "@opencode-ai/plugin": "*",
