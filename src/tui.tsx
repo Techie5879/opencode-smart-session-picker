@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { TextAttributes, type RGBA } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
-import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js"
+import { For, Show, createEffect, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import { resolveSearchConfig } from "./search/config"
 import { PREVIEW_CONTEXT_LINES, loadSessionPreview, type SessionPreview } from "./search/preview"
@@ -59,6 +59,46 @@ function modeLabelColor(
   if (hasError) return theme.error
   if (hasMissing) return theme.warning
   return theme.success
+}
+
+function searchTerms(query: string) {
+  return [...new Set(query.trim().toLowerCase().split(/\s+/).filter(Boolean))].sort((a, b) => b.length - a.length)
+}
+
+function highlightSegments(text: string, query: string) {
+  const terms = searchTerms(query)
+  if (!terms.length) return [{ text, highlight: false }]
+
+  const lower = text.toLowerCase()
+  const ranges: Array<{ start: number; end: number }> = []
+  for (const term of terms) {
+    let from = 0
+    while (from < lower.length) {
+      const start = lower.indexOf(term, from)
+      if (start < 0) break
+      ranges.push({ start, end: start + term.length })
+      from = start + Math.max(1, term.length)
+    }
+  }
+
+  ranges.sort((a, b) => a.start - b.start || b.end - a.end)
+  const merged: Array<{ start: number; end: number }> = []
+  for (const range of ranges) {
+    const previous = merged.at(-1)
+    if (previous && range.start <= previous.end) previous.end = Math.max(previous.end, range.end)
+    else merged.push({ ...range })
+  }
+  if (!merged.length) return [{ text, highlight: false }]
+
+  const segments: Array<{ text: string; highlight: boolean }> = []
+  let index = 0
+  for (const range of merged) {
+    if (range.start > index) segments.push({ text: text.slice(index, range.start), highlight: false })
+    segments.push({ text: text.slice(range.start, range.end), highlight: true })
+    index = range.end
+  }
+  if (index < text.length) segments.push({ text: text.slice(index), highlight: false })
+  return segments
 }
 
 function StatusBar(props: {
@@ -121,6 +161,7 @@ function PreviewPane(props: {
   api: TuiPluginApi
   preview: SessionPreview | undefined
   loading: boolean
+  query: string
 }) {
   const theme = props.api.theme.current
   const dims = useTerminalDimensions()
@@ -167,7 +208,19 @@ function PreviewPane(props: {
                   attributes={line.kind === "role" ? TextAttributes.BOLD : undefined}
                   wrapMode="word"
                 >
-                  {line.text || " "}
+                  <For each={line.isMatch ? highlightSegments(line.text || " ", props.query) : [{ text: line.text || " ", highlight: false }]}>
+                    {(segment) => (
+                      <span
+                        style={
+                          segment.highlight
+                            ? { fg: theme.selectedListItemText, bg: theme.accent }
+                            : { fg: line.isMatch ? theme.text : line.kind === "role" ? theme.primary : theme.text }
+                        }
+                      >
+                        {segment.text}
+                      </span>
+                    )}
+                  </For>
                 </text>
               </Show>
             )}
@@ -193,6 +246,7 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
   const [modeError, setModeError] = createSignal<string>()
   const [preview, setPreview] = createSignal<SessionPreview>()
   const [previewLoading, setPreviewLoading] = createSignal(false)
+  const [selectedSessionID, setSelectedSessionID] = createSignal<string>()
   let request = 0
   let statusRequest = 0
   let previewRequest = 0
@@ -205,13 +259,23 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
       const result = await searchSessions(props.api, nextQuery, { mode: nextMode })
       if (id !== request) return
       setModeError(result.modeUnavailable)
-      setSessions(
-        result.sessions.map((s) => ({
-          id: s.id,
-          title: s.title || `Session ${s.id.slice(0, 8)}`,
-          updated: s.time.updated,
-        })),
-      )
+      const nextSessions = result.sessions.map((s) => ({
+        id: s.id,
+        title: s.title || `Session ${s.id.slice(0, 8)}`,
+        updated: s.time.updated,
+      }))
+      setSessions(nextSessions)
+
+      const current = selectedSessionID()
+      const nextSelection = nextSessions.some((s) => s.id === current) ? current : nextSessions[0]?.id
+      setSelectedSessionID(nextSelection)
+      if (nextSelection) loadPreview(nextSelection, nextQuery)
+      else {
+        if (previewTimer) clearTimeout(previewTimer)
+        previewRequest++
+        setPreview(undefined)
+        setPreviewLoading(false)
+      }
     } catch {
       if (id !== request) return
       setModeError(undefined)
@@ -230,17 +294,19 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
     }
   }
 
-  function loadPreview(sessionID: string) {
+  function loadPreview(sessionID: string, previewQuery = query()) {
     if (previewTimer) clearTimeout(previewTimer)
+    const id = ++previewRequest
+    setPreview(undefined)
     setPreviewLoading(true)
     previewTimer = setTimeout(async () => {
-      const id = ++previewRequest
+      previewTimer = undefined
       try {
-        const result = await loadSessionPreview(props.api, sessionID, query(), PREVIEW_CONTEXT_LINES)
-        if (id !== previewRequest) return
+        const result = await loadSessionPreview(props.api, sessionID, previewQuery, PREVIEW_CONTEXT_LINES)
+        if (id !== previewRequest || query() !== previewQuery || selectedSessionID() !== sessionID) return
         setPreview(result)
       } catch {
-        if (id !== previewRequest) return
+        if (id !== previewRequest || query() !== previewQuery || selectedSessionID() !== sessionID) return
         setPreview(undefined)
       } finally {
         if (id === previewRequest) setPreviewLoading(false)
@@ -260,8 +326,12 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
   })
 
   createEffect(() => {
-    query()
+    const q = query()
+    const current = untrack(selectedSessionID)
+    if (previewTimer) clearTimeout(previewTimer)
+    previewRequest++
     setPreview(undefined)
+    if (current) loadPreview(current, q)
   })
 
   onMount(() => {
@@ -316,14 +386,17 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
             options={options()}
             skipFilter={true}
             onFilter={(q: string) => setQuery(q)}
-            onMove={(opt: { value: string }) => loadPreview(opt.value)}
+            onMove={(opt: { value: string }) => {
+              setSelectedSessionID(opt.value)
+              loadPreview(opt.value)
+            }}
             onSelect={(opt: { value: string }) => {
               props.api.route.navigate("session", { sessionID: opt.value })
               props.api.ui.dialog.clear()
             }}
           />
         </box>
-        <PreviewPane api={props.api} preview={preview()} loading={previewLoading()} />
+        <PreviewPane api={props.api} preview={preview()} loading={previewLoading()} query={query()} />
       </box>
       <StatusBar api={props.api} environment={environment()} modeError={modeError()} />
     </box>
