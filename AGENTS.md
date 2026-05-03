@@ -29,6 +29,14 @@ The dev launcher writes only under `.opencode-dev/` in this repo and sets these 
 - `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, and `XDG_CACHE_HOME` under `.opencode-dev/xdg`.
 - `OPENCODE_DISABLE_PROJECT_CONFIG=true`, so project `.opencode` configs are not loaded during this disposable run.
 
+The launcher also copies theme-only state from the real global OpenCode config into the disposable config on each run:
+
+- It reads the selected `theme` value from `~/.config/opencode/tui.json`, `tui.jsonc`, `opencode.json`, or `opencode.jsonc`.
+- If no config theme is set, it reads only the `theme` value from `~/.local/state/opencode/kv.json`.
+- It copies `~/.config/opencode/themes/` or `~/.config/opencode/.opencode/themes/` into `.opencode-dev/config/themes/` when those directories exist.
+- It copies only theme-related KV keys (`theme`, `theme_mode`, `theme_mode_lock`) into `.opencode-dev/xdg/state/opencode/kv.json`.
+- It does not symlink theme files and does not copy the full global OpenCode config.
+
 Because the dev run isolates XDG data/state too, it will not show the user's real OpenCode sessions. That is intentional for safe plugin testing. Do not remove that isolation unless a task explicitly asks to test against real local OpenCode data.
 
 ## Boundaries
