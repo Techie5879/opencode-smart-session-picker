@@ -28,6 +28,7 @@ The dev launcher writes only under `.opencode-dev/` in this repo and sets these 
 - `OPENCODE_TEST_HOME=.opencode-dev/home`.
 - `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, and `XDG_CACHE_HOME` under `.opencode-dev/xdg`.
 - `OPENCODE_DISABLE_PROJECT_CONFIG=true`, so project `.opencode` configs are not loaded during this disposable run.
+- `OPENCODE_CHANNEL=local`, so plugin-side DB path resolution follows OpenCode's local channel database name.
 
 The launcher preserves existing keys in `.opencode-dev/tui.json`. To try a disposable theme, edit that file directly; do not add code that reads from or copies the user's real global config on every run.
 

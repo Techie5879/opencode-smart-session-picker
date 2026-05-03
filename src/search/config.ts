@@ -1,7 +1,9 @@
-import { constants } from "node:fs"
+import { constants, existsSync, readdirSync, statSync } from "node:fs"
 import { access } from "node:fs/promises"
 import path from "node:path"
 import type { SearchConfig, SearchMode } from "./types"
+
+declare const OPENCODE_CHANNEL: string | undefined
 
 function boolEnv(value: string | undefined) {
   return value === "1" || value === "true" || value === "yes"
@@ -20,17 +22,50 @@ function parseMode(value: string | undefined): SearchMode {
   return value === "fzf" ? "fzf" : "hybrid"
 }
 
-function xdgDataHome() {
-  return process.env.XDG_DATA_HOME ?? path.join(process.env.HOME ?? process.cwd(), ".local", "share")
+function xdgDataHome(env: NodeJS.ProcessEnv = process.env) {
+  return env.XDG_DATA_HOME ?? path.join(env.HOME ?? process.cwd(), ".local", "share")
+}
+
+function installationChannel(env: NodeJS.ProcessEnv = process.env) {
+  if (env.OPENCODE_CHANNEL) return { channel: env.OPENCODE_CHANNEL, explicit: true }
+  if (typeof OPENCODE_CHANNEL === "string") return { channel: OPENCODE_CHANNEL, explicit: true }
+  return { channel: "latest", explicit: false }
+}
+
+function channelDbPath(dataDir: string, env: NodeJS.ProcessEnv = process.env) {
+  const { channel } = installationChannel(env)
+  if (boolEnv(env.OPENCODE_DISABLE_CHANNEL_DB) || ["latest", "beta", "prod"].includes(channel)) {
+    return path.join(dataDir, "opencode.db")
+  }
+  const safe = channel.replace(/[^a-zA-Z0-9._-]/g, "-")
+  return path.join(dataDir, `opencode-${safe}.db`)
+}
+
+function existingOpenCodeDb(dataDir: string) {
+  try {
+    return readdirSync(dataDir)
+      .filter((entry) => /^opencode(?:-[a-zA-Z0-9._-]+)?\.db$/.test(entry))
+      .map((entry) => {
+        const file = path.join(dataDir, entry)
+        return { file, mtime: statSync(file).mtimeMs }
+      })
+      .sort((a, b) => b.mtime - a.mtime)[0]?.file
+  } catch {
+    return undefined
+  }
 }
 
 export function resolveSourceDbPath(env: NodeJS.ProcessEnv = process.env) {
   if (env.OPENCODE_SMART_PICKER_SOURCE_DB) return path.resolve(env.OPENCODE_SMART_PICKER_SOURCE_DB)
   if (env.OPENCODE_DB) {
     if (env.OPENCODE_DB === ":memory:" || path.isAbsolute(env.OPENCODE_DB)) return env.OPENCODE_DB
-    return path.join(xdgDataHome(), "opencode", env.OPENCODE_DB)
+    return path.join(xdgDataHome(env), "opencode", env.OPENCODE_DB)
   }
-  return path.join(xdgDataHome(), "opencode", "opencode.db")
+  const dataDir = path.join(xdgDataHome(env), "opencode")
+  const expected = channelDbPath(dataDir, env)
+  if (existsSync(expected)) return expected
+  if (boolEnv(env.OPENCODE_DISABLE_CHANNEL_DB) || installationChannel(env).explicit) return expected
+  return existingOpenCodeDb(dataDir) ?? expected
 }
 
 export function resolveSearchDbPath(sourceDbPath: string | undefined, env: NodeJS.ProcessEnv = process.env) {

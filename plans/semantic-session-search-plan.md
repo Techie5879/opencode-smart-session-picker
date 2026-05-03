@@ -14,7 +14,7 @@ Current implementation status:
 - [x] Search code lives in `src/search/` as sidecar/plugin-owned behavior.
 - [x] OpenCode-owned TUI/session/message/part types are imported from public
   OpenCode packages.
-- [x] Fresh sidecar creation, schema migration, API fallback, FTS indexing,
+- [x] Fresh sidecar creation, schema migration, FTS indexing,
   hybrid keyword ranking, fzf mode, llama-compatible embedding client, and
   integration tests are implemented.
 - [x] sqlite-vec vector row creation/query is wired as optional behavior gated
@@ -107,10 +107,9 @@ Both modes must keep OpenCode as the display and routing source of truth:
   hybrid ranking.
 - Visible title, time, parent/current/root status, and route target must be
   hydrated from OpenCode API results immediately before rendering.
-- Missing/stale sidecar rows must degrade to OpenCode API search, not block the
-  picker.
-- Missing `fzf` must disable only `fzf` mode and leave `hybrid`/OpenCode API
-  fallback usable.
+- Missing/stale sidecar rows must surface a clear mode-unavailable message to
+  the user, not silently fall back to a different search backend.
+- Missing `fzf` must disable only `fzf` mode and report it as unavailable.
 
 Implementation placement:
 
@@ -119,7 +118,7 @@ Implementation placement:
 - Hybrid retrieval belongs in the sidecar/ranking modules.
 - fzf behavior belongs behind the fzf adapter.
 - README should describe user-facing capabilities and setup only; type
-  boundaries, module placement, rollout rules, and fallback contracts live in
+  boundaries, module placement, rollout rules, and degradation contracts live in
   this plan and `AGENTS.md`.
 
 ## Embedding Profile
@@ -190,9 +189,9 @@ llama-server \
   sidecar install without touching OpenCode config.
 - If the model/server is no longer available, degrade to FTS/API search and keep
   existing vector metadata marked stale instead of deleting user-visible search.
-- If the saved or requested search mode is unavailable, use the next available
-  mode in this order: hybrid with vector, hybrid keyword-only, OpenCode API
-  search. Do not silently switch into fzf mode unless the user selected fzf.
+- If the saved or requested search mode is unavailable, surface a clear
+  mode-unavailable message in the picker status bar. Do not silently fall back
+  to OpenCode API search or switch into a different mode.
 - If `alpha` changes between runs, apply the new value immediately at query
   time. Do not rebuild the sidecar just because ranking weights changed.
 
@@ -475,8 +474,8 @@ llama-server \
   - [x] preserve fzf result order.
   - [x] if fzf exits with no matches, return no matches rather than falling back
     to a different mode for that query.
-  - [x] if fzf is missing/unhealthy, report mode unavailable and fall back using
-    the existing install behavior rules.
+   - [x] if fzf is missing/unhealthy, report mode unavailable and surface the
+     error to the user without falling back to a different search backend.
 - [x] Group document hits by `session_id`.
 - [ ] Apply session-level boosts only from OpenCode-derived metadata:
   - [ ] exact/fuzzy title match.
@@ -495,7 +494,7 @@ llama-server \
   - [x] resolve the active search mode.
   - [x] query hybrid or fzf mode for ranked candidate IDs when available.
   - [x] hydrate final visible rows from OpenCode API.
-  - [x] fall back to OpenCode API search when sidecar is missing/unusable.
+   - [x] surface mode-unavailable message when sidecar is missing/unusable.
 - [x] Keep mode selection behind the existing `session.list` picker:
   - [x] no new command palette entry.
   - [x] no new OpenCode route.
@@ -546,12 +545,12 @@ llama-server \
 - [x] Add integration tests for text extraction through a real sidecar DB.
 - [x] Add integration tests for FTS query behavior through real SQLite FTS5.
 - [x] Add integration tests for hybrid alpha scoring:
-  - [x] vector-unavailable fallback.
+   - [x] vector-unavailable degradation to keyword-only.
 - [x] Add integration tests for fzf mode with a fake `fzf` executable.
 - [x] Add sidecar migration tests using a temp SQLite DB.
 - [x] Add source-reader tests using fixture DB rows.
 - [x] Add embedding client tests with a real local `/v1/embeddings` HTTP server.
-- [x] Add fallback tests for vector-disabled paths.
+- [x] Add tests for vector-disabled paths.
 - [x] Add fresh-install tests:
   - [x] no sidecar.
   - [x] no vector extension.
@@ -580,7 +579,8 @@ llama-server \
 - [ ] Search still works with no vector server.
 - [ ] Search still works with no fzf binary unless fzf mode is explicitly
   selected, and explicit fzf mode reports the missing dependency clearly.
-- [ ] Search still works with no sidecar by falling back to OpenCode API.
+- [ ] Search surfaces a clear mode-unavailable message when the sidecar is
+  missing, without silently falling back to OpenCode API.
 - [ ] Search does not mutate `opencode.db`.
 - [ ] Index rebuild can be safely repeated.
 - [ ] Index handles deleted sessions and archived sessions.

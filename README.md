@@ -13,10 +13,10 @@ local search index is disposable and can be rebuilt from OpenCode data.
 - Searches session titles, paths, and indexed transcript snippets.
 - Uses a local SQLite search index for fast keyword search.
 - Can use `fzf` for fuzzy ranking when requested.
-- Keeps working with OpenCode's normal session search if the local index is not
-  ready yet.
-- Shows non-blocking status rows when indexing or optional dependencies are not
-  available.
+- Surfaces clear mode-unavailable messages when required dependencies are
+  missing instead of silently falling back.
+- Shows non-blocking dependency status grouped by mode when indexing or optional
+  dependencies are not available.
 - Includes an isolated dev launcher for trying the plugin without touching your
   real OpenCode config or state.
 
@@ -49,13 +49,14 @@ Restart `opencode`, then press `Ctrl-X` followed by `L`.
 
 ## Search Modes
 
-The default mode is `hybrid`, which currently uses the local SQLite keyword
-index and falls back to OpenCode session search when needed.
+The default mode is `hybrid`, which uses the local SQLite keyword index. If the
+sidecar index or other required dependencies are unavailable, the picker shows
+a clear status message instead of silently falling back to a different search.
 
-Inside the smart session dialog, a separate OpenTUI status band shows mode chips
-for `hybrid` and `fzf`; press `Tab` to switch for the current picker session.
-Dependency chips show whether OpenCode DB access, the sidecar index,
-`sqlite-vec`, `llama-server`, and `fzf` are ready, missing, errored, or disabled.
+Inside the smart session dialog, a status bar groups dependency chips by mode
+(`hybrid` and `fzf`). The active mode is marked with `▸`; press `Tab` to
+switch. Each mode row shows its own dependencies as ready, missing, errored,
+or disabled.
 
 To use another mode for a run:
 
@@ -160,7 +161,9 @@ bun run dev:opencode -- <workspace>
 Omit `<workspace>` to open OpenCode against this repo.
 
 The dev launcher writes under `.opencode-dev/` and uses an isolated OpenCode
-home. It intentionally will not show your real OpenCode sessions.
+home. It intentionally will not show your real OpenCode sessions. The picker
+derives the isolated source DB from OpenCode's channel database convention, so
+local dev runs use `.opencode-dev/xdg/data/opencode/opencode-local.db`.
 
 ## Checks
 

@@ -56,11 +56,6 @@ async function ensureBackgroundIndex(api: TuiPluginApi, sessions: Session[], sid
     })
 }
 
-async function fallback(api: TuiPluginApi, query: string, diagnostics: SearchDiagnostic[]): Promise<SearchResponse> {
-  diagnostics.push({ kind: "fallback", message: "Using OpenCode session search." })
-  return { sessions: await listOpenCodeSessions(api, query), diagnostics }
-}
-
 export async function searchSessions(
   api: TuiPluginApi,
   query: string,
@@ -69,6 +64,20 @@ export async function searchSessions(
   const config: SearchConfig = { ...resolveSearchConfig(), ...input }
   const diagnostics: SearchDiagnostic[] = []
   const allSessions = await listOpenCodeSessions(api)
+
+  // Empty query: return all sessions regardless of mode or dep availability
+  if (!query.trim()) {
+    let sidecar: SearchSidecar | undefined
+    try {
+      sidecar = await SearchSidecar.open(config)
+      await ensureBackgroundIndex(api, allSessions, sidecar, diagnostics)
+    } catch {
+      /* sidecar not needed for empty-query listing */
+    } finally {
+      sidecar?.close()
+    }
+    return { sessions: allSessions, diagnostics }
+  }
 
   let sidecar: SearchSidecar | undefined
   try {
@@ -86,7 +95,11 @@ export async function searchSessions(
     if (fzf.state !== "available" || !fzf.bin) {
       diagnostics.push({ kind: "fzf-unavailable", message: fzf.message ?? "fzf is unavailable." })
       sidecar?.close()
-      return fallback(api, query, diagnostics)
+      return {
+        sessions: [],
+        diagnostics,
+        modeUnavailable: "fzf is not installed — install fzf to use this mode.",
+      }
     }
 
     const snippets = sidecar?.snippetsForSessions(allSessions.map((session) => session.id)) ?? new Map<string, string>()
@@ -98,22 +111,29 @@ export async function searchSessions(
     sidecar?.close()
     if (result.status === "error") {
       diagnostics.push({ kind: "fzf-unavailable", message: result.message })
-      return fallback(api, query, diagnostics)
+      return {
+        sessions: [],
+        diagnostics,
+        modeUnavailable: `fzf error: ${result.message}`,
+      }
     }
     if (result.status === "no-match") return { sessions: [], diagnostics }
     return { sessions: orderByIDs(allSessions, result.sessionIDs), diagnostics }
   }
 
-  if (!sidecar) return fallback(api, query, diagnostics)
-  if (!query.trim()) {
-    sidecar.close()
-    return { sessions: allSessions, diagnostics }
+  // Hybrid mode
+  if (!sidecar) {
+    return {
+      sessions: [],
+      diagnostics,
+      modeUnavailable: "Search index is unavailable — hybrid search requires the sidecar database.",
+    }
   }
 
   const keyword = sidecar.searchFts(query)
   if (!keyword.length) {
     sidecar.close()
-    return fallback(api, query, diagnostics)
+    return { sessions: [], diagnostics }
   }
 
   let vector: RankedCandidate[] = []

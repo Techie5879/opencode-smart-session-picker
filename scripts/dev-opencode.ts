@@ -76,8 +76,7 @@ const env: Record<string, string> = {
   OPENCODE_TUI_CONFIG: tuiConfig,
   OPENCODE_DISABLE_PROJECT_CONFIG: "true",
   OPENCODE_DISABLE_AUTOUPDATE: "true",
-  OPENCODE_SMART_PICKER_SOURCE_DB:
-    process.env.OPENCODE_SMART_PICKER_SOURCE_DB ?? path.join(devRoot, "xdg", "data", "opencode", "opencode.db"),
+  OPENCODE_CHANNEL: process.env.OPENCODE_CHANNEL ?? "local",
   OPENCODE_SMART_PICKER_SEARCH_DB:
     process.env.OPENCODE_SMART_PICKER_SEARCH_DB ?? path.join(devRoot, "opencode-search.db"),
   OPENCODE_SMART_PICKER_EMBED_BASE_URL:

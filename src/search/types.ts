@@ -15,7 +15,6 @@ export type SearchDiagnostic = {
     | "embedding-unavailable"
     | "fzf-unavailable"
     | "sidecar-stale"
-    | "fallback"
   message: string
 }
 
@@ -59,6 +58,7 @@ export type RankedCandidate = {
 export type SearchResponse = {
   sessions: Session[]
   diagnostics: SearchDiagnostic[]
+  modeUnavailable?: string
 }
 
 export type SearchModeStatus = {
@@ -79,6 +79,10 @@ export type SearchEnvironmentStatus = {
   alpha: number
   modes: SearchModeStatus[]
   dependencies: SearchDependencyStatus[]
+  modeDependencies: {
+    hybrid: SearchDependencyStatus[]
+    fzf: SearchDependencyStatus[]
+  }
 }
 
 export type SourceSessionCorpus = {

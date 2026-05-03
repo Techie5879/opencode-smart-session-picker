@@ -365,6 +365,12 @@ export class SearchSidecar {
     }))
   }
 
+  getSessionDocumentTexts(sessionID: string): Array<{ role: string | null; text: string }> {
+    return this.db
+      .prepare("select role, text from document where session_id = ? order by rowid asc")
+      .all(sessionID) as Array<{ role: string | null; text: string }>
+  }
+
   snippetsForSessions(sessionIDs: string[]) {
     if (!sessionIDs.length) return new Map<string, string>()
     const placeholders = sessionIDs.map(() => "?").join(",")

@@ -1,9 +1,10 @@
-import { chmod, mkdtemp, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { Database } from "bun:sqlite"
 import { afterEach, describe, expect, test } from "bun:test"
 import type { SearchConfig } from "../../src/search/types"
+import { resolveSourceDbPath } from "../../src/search/config"
 import { checkFzf } from "../../src/search/dependencies"
 import { LlamaEmbeddingClient } from "../../src/search/embedding"
 import { runFzfSearch } from "../../src/search/fzf"
@@ -111,6 +112,25 @@ function createSourceDb(file: string) {
 }
 
 describe("search integration", () => {
+  test("resolves OpenCode channel database paths from a real XDG data directory", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "opencode-smart-picker-xdg-"))
+    const dataHome = path.join(root, "data")
+    const opencodeData = path.join(dataHome, "opencode")
+    const localDb = path.join(opencodeData, "opencode-local.db")
+    await mkdir(opencodeData, { recursive: true })
+    await writeFile(localDb, "")
+
+    expect(resolveSourceDbPath({ XDG_DATA_HOME: dataHome, OPENCODE_CHANNEL: "local" })).toBe(localDb)
+    expect(resolveSourceDbPath({ XDG_DATA_HOME: dataHome })).toBe(localDb)
+    expect(
+      resolveSourceDbPath({
+        XDG_DATA_HOME: dataHome,
+        OPENCODE_CHANNEL: "local",
+        OPENCODE_DISABLE_CHANNEL_DB: "true",
+      }),
+    ).toBe(path.join(opencodeData, "opencode.db"))
+  })
+
   test("reads an OpenCode-shaped SQLite source DB and searches real sidecar FTS rows", async () => {
     const sourceDb = await tempPath("opencode.db")
     const searchDb = await tempPath("opencode-search.db")

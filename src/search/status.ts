@@ -83,16 +83,25 @@ export async function checkSearchEnvironment(input: { mode?: SearchMode } = {}):
   ])
   const dependencies = [sourceDb, sidecarResult.sidecar, sidecarResult.sqliteVec, llama, fzf]
   const vectorReady = sidecarResult.sqliteVec.state === "available" && llama.state === "available"
-  const hybridDetail = vectorReady ? "keyword + vector ready" : "keyword ready; vector degraded"
+  const hybridAvailable = sidecarResult.sidecar.state === "available"
+  const hybridDetail = !hybridAvailable
+    ? "sidecar index unavailable"
+    : vectorReady
+      ? "keyword + vector ready"
+      : "keyword ready; vector degraded"
 
   return {
     mode: config.mode,
     alpha: config.alpha,
     dependencies,
+    modeDependencies: {
+      hybrid: [sourceDb, sidecarResult.sidecar, sidecarResult.sqliteVec, llama],
+      fzf: [fzf],
+    },
     modes: [
       {
         mode: "hybrid",
-        state: "available",
+        state: hybridAvailable ? "available" : "unavailable",
         active: config.mode === "hybrid",
         message: `${hybridDetail}. alpha=${config.alpha}`,
       },
