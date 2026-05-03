@@ -40,10 +40,10 @@ function stateColor(theme: TuiPluginApi["theme"]["current"], state: DependencySt
 }
 
 function shortName(name: SearchDependencyStatus["name"]) {
-  if (name === "OpenCode DB") return "db"
-  if (name === "sidecar index") return "index"
-  if (name === "sqlite-vec") return "vec"
-  if (name === "llama-server") return "llama"
+  if (name === "OpenCode DB") return "opencode-db"
+  if (name === "sidecar index") return "sidecar-index"
+  if (name === "sqlite-vec") return "sqlite-vec"
+  if (name === "llama-server") return "llama-server"
   return name
 }
 
@@ -54,16 +54,24 @@ function StatusBar(props: { api: TuiPluginApi; environment: SearchEnvironmentSta
       <box paddingLeft={4} paddingRight={4} paddingBottom={1} flexDirection="row" gap={0}>
         <For each={props.environment!.dependencies}>
           {(dep, i) => (
-            <box flexDirection="row">
+            <box flexDirection="row" flexShrink={0}>
               <Show when={i() > 0}>
-                <text fg={theme.textMuted}>{" · "}</text>
+                <text fg={theme.textMuted} wrapMode="none">
+                  {" · "}
+                </text>
               </Show>
-              <text fg={theme.textMuted}>{shortName(dep.name)} </text>
-              <text fg={stateColor(theme, dep.state)}>{stateWord(dep.state)}</text>
+              <text fg={theme.textMuted} wrapMode="none">
+                {shortName(dep.name)}{" "}
+              </text>
+              <text fg={stateColor(theme, dep.state)} wrapMode="none">
+                {stateWord(dep.state)}
+              </text>
             </box>
           )}
         </For>
-        <text fg={theme.textMuted}>{"  tab switch mode"}</text>
+        <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+          {"  tab switch mode"}
+        </text>
       </box>
     </Show>
   )
@@ -119,7 +127,7 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
   })
 
   onMount(() => {
-    props.api.ui.dialog.setSize("large")
+    props.api.ui.dialog.setSize("xlarge")
   })
 
   onCleanup(() => {
