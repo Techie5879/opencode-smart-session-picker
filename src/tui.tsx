@@ -1,29 +1,13 @@
 /** @jsxImportSource @opentui/solid */
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
-import type { JSX } from "@opentui/solid"
 import type { Session } from "@opencode-ai/sdk/v2"
-import type { TuiDialogSelectOption, TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
-
-type LoadState = "idle" | "loading" | "error"
+import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 
 const PLUGIN_ID = "local.smart-session-picker"
 
-function timeLabel(value: number) {
-  return new Date(value).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  })
-}
-
-function categoryLabel(value: number) {
-  const date = new Date(value)
-  const today = new Date()
-  if (date.toDateString() === today.toDateString()) return "Today"
-  return date.toDateString()
-}
-
 async function searchSessions(api: TuiPluginApi, query: string): Promise<Session[]> {
   const response = await api.client.session.list({
+    roots: true,
     search: query.trim() || undefined,
   })
 
@@ -31,71 +15,31 @@ async function searchSessions(api: TuiPluginApi, query: string): Promise<Session
     throw new Error(typeof response.error === "string" ? response.error : "Failed to list sessions")
   }
 
-  return [...(response.data ?? [])]
-    .filter((session) => session.parentID === undefined)
-    .sort((a: Session, b: Session) => {
-      const updatedDay = new Date(b.time.updated).setHours(0, 0, 0, 0) - new Date(a.time.updated).setHours(0, 0, 0, 0)
-      if (updatedDay !== 0) return updatedDay
-      return b.time.created - a.time.created
-    })
-}
-
-function optionFor(session: Session): TuiDialogSelectOption<string> {
-  return {
-    title: session.title,
-    value: session.id,
-    category: categoryLabel(session.time.updated),
-    footer: timeLabel(session.time.updated),
-  }
-}
-
-function statusOption(state: LoadState, query: string, error: string | undefined): TuiDialogSelectOption<string>[] {
-  if (state === "loading") {
-    return [
-      {
-        title: query ? `Searching for "${query}"` : "Loading sessions",
-        value: "__loading__",
-        disabled: true,
-      },
-    ]
-  }
-
-  if (state === "error") {
-    return [
-      {
-        title: "Failed to load sessions",
-        description: error,
-        value: "__error__",
-        disabled: true,
-      },
-    ]
-  }
-
-  return []
+  return response.data ?? []
 }
 
 function SmartSessionDialog(props: { api: TuiPluginApi }) {
   const [query, setQuery] = createSignal("")
   const [sessions, setSessions] = createSignal<Session[]>([])
-  const [state, setState] = createSignal<LoadState>("idle")
+  const [loading, setLoading] = createSignal(true)
   const [error, setError] = createSignal<string>()
   let request = 0
   let timer: ReturnType<typeof setTimeout> | undefined
 
   async function refresh(nextQuery: string) {
     const id = ++request
-    setState("loading")
+    setLoading(true)
     setError(undefined)
 
     try {
       const result = await searchSessions(props.api, nextQuery)
       if (id !== request) return
       setSessions(result)
-      setState("idle")
+      setLoading(false)
     } catch (err) {
       if (id !== request) return
       setError(err instanceof Error ? err.message : String(err))
-      setState("error")
+      setLoading(false)
     }
   }
 
@@ -115,11 +59,33 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
   })
 
   const options = createMemo(() => {
-    const rows = sessions().map(optionFor)
-    if (rows.length) return rows
+    const failure = error()
+    if (failure) {
+      return [
+        {
+          title: "Failed to load sessions",
+          description: failure,
+          value: "__error__",
+          disabled: true,
+        },
+      ]
+    }
 
-    const status = statusOption(state(), query(), error())
-    if (status.length) return status
+    if (loading()) {
+      return [
+        {
+          title: query() ? `Searching for "${query()}"` : "Loading sessions",
+          value: "__loading__",
+          disabled: true,
+        },
+      ]
+    }
+
+    const rows = sessions().map((session) => ({
+      title: session.title,
+      value: session.id,
+    }))
+    if (rows.length) return rows
 
     return [
       {
@@ -146,11 +112,9 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
   )
 }
 
-function openSmartSessionPicker(api: TuiPluginApi) {
-  api.ui.dialog.replace(() => <SmartSessionDialog api={api} />)
-}
-
 const tui: TuiPlugin = async (api) => {
+  const open = () => api.ui.dialog.replace(() => <SmartSessionDialog api={api} />)
+
   api.command.register(() => [
     {
       title: "Smart session search",
@@ -158,13 +122,13 @@ const tui: TuiPlugin = async (api) => {
       keybind: "session_list",
       category: "Session",
       hidden: true,
-      onSelect: () => openSmartSessionPicker(api),
+      onSelect: open,
     },
     {
       title: "Smart session search",
       value: "smart-session-picker.open",
       category: "Session",
-      onSelect: () => openSmartSessionPicker(api),
+      onSelect: open,
     },
   ])
 }
