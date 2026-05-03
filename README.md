@@ -7,6 +7,10 @@ It adds a smarter local search path for finding past OpenCode sessions while
 leaving your OpenCode sessions, config, and navigation in OpenCode itself. The
 local search index is disposable and can be rebuilt from OpenCode data.
 
+<img width="1093" height="589" alt="image" src="https://github.com/user-attachments/assets/c30b2927-6d74-4d98-8d6c-610b45d02628" />
+
+
+
 ## Features
 
 - Replaces the normal OpenCode session picker shortcut: `Ctrl-X` then `L`.
