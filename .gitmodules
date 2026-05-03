@@ -4,3 +4,9 @@
 [submodule "upstream/opencode"]
 	path = upstream/opencode
 	url = https://github.com/anomalyco/opencode.git
+[submodule "upstream/sqlite-vec"]
+	path = upstream/sqlite-vec
+	url = https://github.com/asg017/sqlite-vec.git
+[submodule "upstream/llama.cpp"]
+	path = upstream/llama.cpp
+	url = https://github.com/ggml-org/llama.cpp.git

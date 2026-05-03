@@ -41,6 +41,7 @@ Because the dev run isolates XDG data/state too, it will not show the user's rea
 - Treat `upstream/opencode` and `upstream/opentui` as read-only reference submodules unless a task explicitly asks to update submodule pins.
 - Keep plugin source in `src/`.
 - Keep the first implementation centered on the TUI plugin API. Avoid patching OpenCode core until plugin shadowing is proven insufficient.
+- Keep research notes in `docs/`. Session-storage research should focus on the current SQLite-backed `session`, `message`, and `part` tables, not the older JSON session files.
 
 ## Implementation Notes
 
