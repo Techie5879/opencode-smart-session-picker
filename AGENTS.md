@@ -41,6 +41,9 @@ Because the dev run isolates XDG data/state too, it will not show the user's rea
 - Treat `upstream/opencode` and `upstream/opentui` as read-only reference submodules unless a task explicitly asks to update submodule pins.
 - Keep plugin source in `src/`.
 - Keep the first implementation centered on the TUI plugin API. Avoid patching OpenCode core until plugin shadowing is proven insufficient.
+- The only OpenCode behavior this plugin should override by default is the built-in session picker command path: search sessions and render the related picker dialog. Do not override, shadow, replace, rebind, wrap, or reimplement any other native OpenCode command, route, keybind, dialog, mutation flow, config behavior, storage behavior, theme behavior, model/provider behavior, prompt behavior, workspace behavior, or global TUI functionality unless the user explicitly asks for that exact change.
+- Prefer native OpenCode APIs for everything outside the session picker replacement. If OpenCode already provides filtering, root-session selection, sorting, routing, mutation, or display data needed by the picker, call the native API instead of recreating it locally.
+- Do not add extra command-palette entries or alternate plugin commands for this feature unless the user explicitly asks. The command registration should remain limited to shadowing `session.list` with `session_list`.
 - Keep research notes in `docs/`. Session-storage research should focus on the current SQLite-backed `session`, `message`, and `part` tables, not the older JSON session files.
 
 ## Implementation Notes
@@ -48,3 +51,4 @@ Because the dev run isolates XDG data/state too, it will not show the user's rea
 - The plugin shadows the built-in session picker by registering `value: "session.list"` and `keybind: "session_list"`.
 - `api.ui.DialogSelect` is the preferred first UI surface because it is the public OpenCode TUI plugin dialog API.
 - The future hybrid/vector search integration should replace `searchSessions` in `src/tui.tsx`, not the command registration path.
+- Keep `src/tui.tsx` lean: local code should exist only where OpenCode does not expose the native picker internals through the plugin API, or where the semantic search feature needs plugin-owned sidecar behavior.

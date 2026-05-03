@@ -19,8 +19,9 @@ llama.cpp
   optional local embedding server, OpenAI-compatible /v1/embeddings
 
 TUI plugin
-  reads OpenCode API for picker metadata, queries sidecar for ranking, navigates
-  through OpenCode API
+  reads OpenCode API for picker metadata, runs the selected search mode,
+  hydrates final display rows through OpenCode API, navigates through OpenCode
+  API
 ```
 
 ## Design Principles
@@ -32,8 +33,18 @@ TUI plugin
 - Prefer OpenCode types and APIs. Any OpenCode-owned domain object used in code
   must use a type imported directly from OpenCode packages when one is
   available. Do not duplicate OpenCode session/message/part/config shapes.
+- Before adding local behavior, inspect native upstream surfaces first:
+  OpenCode for session APIs/types/commands/dialog contracts, OpenTUI for public
+  TUI primitives, fzf for fuzzy scoring/filter behavior, sqlite-vec for vector
+  storage/query behavior, llama.cpp for embedding server behavior, and Bun or
+  SQLite for filesystem/database primitives. Use focused subagents in parallel
+  for this reconnaissance when the implementation task is broad enough and their
+  work can stay read-only and non-conflicting.
 - Define local types only for plugin-owned features: sidecar rows, extracted
   search documents, ranked search results, dependency health, and UI state.
+- Keep search mode abstractions plugin-owned and minimal. The mode selector may
+  choose between hybrid search and fzf search, but both modes must return
+  candidate session IDs that are hydrated by OpenCode before rendering.
 - Keep sidecar data disposable. Every sidecar row must be rebuildable from
   OpenCode storage plus the configured embedding profile.
 - Avoid writing into OpenCode databases or global OpenCode config. The only
@@ -50,9 +61,38 @@ TUI plugin
 
 - [x] Add `upstream/sqlite-vec` for local vector search reference code.
 - [x] Add `upstream/llama.cpp` for local embedding server reference code.
+- [x] Add `upstream/fzf` for fuzzy finder reference code and CLI behavior.
 - [ ] Keep model-weight repositories out of git submodules.
 - [ ] Document recommended external model download in README only; do not commit
   GGUF files.
+
+## Search Modes
+
+The picker supports two search modes behind one command path:
+
+- `hybrid`: default semantic search mode. It combines keyword evidence from
+  SQLite FTS5 and vector evidence from sqlite-vec. The query-time `alpha` value
+  controls the tradeoff: `0` means keyword-only weighting, `1` means
+  vector-only weighting, and values between them blend normalized keyword and
+  vector scores. `alpha` is runtime ranking configuration, not schema
+  configuration, so changing it must not require a sidecar rebuild.
+- `fzf`: fuzzy search mode. It uses fzf-native filtering/scoring semantics over
+  OpenCode-hydrated session display fields and, when the sidecar exists,
+  derived document snippets. It must call an installed `fzf` binary or reuse a
+  directly exposed fzf-native scoring implementation if one becomes available;
+  do not hand-roll an independent fuzzy matcher unless upstream inspection proves
+  there is no usable native path.
+
+Both modes must keep OpenCode as the display and routing source of truth:
+
+- Candidate IDs may come from OpenCode API search, the sidecar, fzf ranking, or
+  hybrid ranking.
+- Visible title, time, parent/current/root status, and route target must be
+  hydrated from OpenCode API results immediately before rendering.
+- Missing/stale sidecar rows must degrade to OpenCode API search, not block the
+  picker.
+- Missing `fzf` must disable only `fzf` mode and leave `hybrid`/OpenCode API
+  fallback usable.
 
 ## Embedding Profile
 
@@ -69,7 +109,11 @@ The initial recommended profile is local-only and optional:
 - Query prefix: `search_query: `.
 - Vector backend: `sqlite-vec` `vec0`.
 - Lexical backend: SQLite FTS5.
-- Fusion: reciprocal rank fusion over FTS and vector ranks.
+- Hybrid scoring: normalized keyword score and normalized vector score blended
+  by `alpha`.
+- Fallback fusion: reciprocal rank fusion may be used only when comparable
+  normalized scores are unavailable, and that choice must be local to the hybrid
+  ranking module.
 
 Example embedding server:
 
@@ -94,10 +138,13 @@ llama-server \
 - If `sqlite-vec` can be loaded and the embedding server is healthy, add vector
   rows as part of the same derived index. If not, mark vector state as disabled
   or unavailable and keep FTS results live.
+- If `fzf` is installed, mark fzf mode available after a non-interactive
+  `--filter` smoke test. If `fzf` is missing, mark only fzf mode unavailable.
 - Do not auto-download model weights during picker open. Model download is an
   explicit setup step documented in README and, later, a dedicated setup script.
 - Show visible but non-blocking status rows for first-run indexing, stale index,
-  source DB unavailable, vector disabled, and embedding server unavailable.
+  source DB unavailable, vector disabled, embedding server unavailable, and fzf
+  unavailable when fzf mode is selected.
 
 ## Existing Install And Upgrade Behavior
 
@@ -115,6 +162,11 @@ llama-server \
   sidecar install without touching OpenCode config.
 - If the model/server is no longer available, degrade to FTS/API search and keep
   existing vector metadata marked stale instead of deleting user-visible search.
+- If the saved or requested search mode is unavailable, use the next available
+  mode in this order: hybrid with vector, hybrid keyword-only, OpenCode API
+  search. Do not silently switch into fzf mode unless the user selected fzf.
+- If `alpha` changes between runs, apply the new value immediately at query
+  time. Do not rebuild the sidecar just because ranking weights changed.
 
 ## Non-Goals
 
@@ -126,9 +178,25 @@ llama-server \
 - Do not submodule GGUF model artifacts.
 - Do not maintain an independent copy of OpenCode session state beyond the
   sidecar projections needed for ranking.
+- Do not invoke fzf as an interactive full-screen UI inside the OpenCode TUI.
+  The plugin owns the dialog surface and may use fzf only as a non-interactive
+  ranking/filtering dependency unless the user explicitly asks for a different
+  UI.
+- Do not add a second command path for fzf mode. Mode selection lives behind the
+  existing `session.list` override.
 
 ## Phase 1: OpenCode Boundaries And Types
 
+- [ ] Before each implementation phase, inspect upstream surfaces first:
+  - [ ] OpenCode exported SDK/plugin types and TUI command/dialog behavior.
+  - [ ] OpenTUI public components/events before creating UI primitives.
+  - [ ] fzf CLI/library behavior before creating fuzzy ranking code.
+  - [ ] sqlite-vec docs/examples before creating vector queries.
+  - [ ] llama.cpp server docs/examples before creating embedding setup or health
+    checks.
+  - [ ] Bun/SQLite/filesystem APIs before adding third-party dependencies.
+- [ ] Use parallel read-only subagents for upstream inspection when the phase has
+  independent questions that can be answered without blocking local work.
 - [ ] Replace local duplicated OpenCode-facing types with exported SDK/plugin
   types wherever available:
   - [x] Use OpenCode's exported `Session` type in `src/tui.tsx`.
@@ -155,6 +223,10 @@ llama-server \
 ## Phase 2: Configuration And Path Resolution
 
 - [ ] Define minimal search configuration in `src/`, with environment overrides:
+  - [ ] `OPENCODE_SMART_PICKER_SEARCH_MODE`: `hybrid` or `fzf`.
+  - [ ] `OPENCODE_SMART_PICKER_HYBRID_ALPHA`: query-time blend between keyword
+    and vector scores.
+  - [ ] `OPENCODE_SMART_PICKER_FZF_BIN`: optional path to the `fzf` executable.
   - [ ] `OPENCODE_SMART_PICKER_SEARCH_DB`.
   - [ ] `OPENCODE_SMART_PICKER_SOURCE_DB`.
   - [ ] `OPENCODE_SMART_PICKER_EMBED_BASE_URL`.
@@ -170,6 +242,14 @@ llama-server \
   - [ ] Prefer explicit `OPENCODE_SMART_PICKER_SEARCH_DB`.
   - [ ] Default next to the source DB as `opencode-search.db`.
   - [ ] In disposable dev, keep it under `.opencode-dev/`.
+- [ ] Resolve fzf dependency path:
+  - [ ] Prefer explicit `OPENCODE_SMART_PICKER_FZF_BIN`.
+  - [ ] Then search `PATH`.
+  - [ ] In dev, allow `upstream/fzf/bin/fzf` when it has been built locally.
+  - [ ] Do not download or build fzf automatically during picker open.
+- [ ] Validate `OPENCODE_SMART_PICKER_HYBRID_ALPHA` locally in the ranking
+  module. Clamp or reject invalid values there; do not create an unrelated
+  global constant.
 - [ ] Do not read or copy global OpenCode config to discover sessions. OpenCode
   API and explicit source DB paths are the only discovery sources.
 
@@ -185,14 +265,21 @@ llama-server \
     query.
   - [ ] returned embedding dimensions match sidecar vector metadata when the
     vector table already exists.
+  - [ ] `fzf --version` succeeds when fzf mode is selected or configured.
+  - [ ] `printf 'alpha\nbeta\n' | fzf --filter a` returns deterministic output
+    and exits successfully.
 - [ ] Make dependency health non-blocking for the picker:
   - [ ] no sidecar: use OpenCode API search while creating FTS index.
   - [ ] no `sqlite-vec`: FTS-only mode.
   - [ ] no embedding server: FTS-only mode.
   - [ ] dimension mismatch: disable vector and mark vector rebuild needed.
+  - [ ] no `fzf`: disable fzf mode and show fzf-unavailable state only when the
+    user selected fzf.
 - [ ] Add README instructions for the minimum checks users can run manually:
   - [ ] `bun install`.
   - [ ] `bun run typecheck`.
+  - [ ] `fzf --version`.
+  - [ ] `printf 'alpha\nbeta\n' | fzf --filter a`.
   - [ ] `llama-server --help`.
   - [ ] `curl http://127.0.0.1:8081/health`.
   - [ ] `curl http://127.0.0.1:8081/v1/embeddings` smoke test.
@@ -221,6 +308,9 @@ llama-server \
   - [ ] `document_prefix`.
   - [ ] `query_prefix`.
   - [ ] `vector_state`: `enabled`, `disabled`, `unavailable`, or `stale`.
+  - [ ] `ranking_version`.
+  - [ ] `supported_search_modes`: expected to include `hybrid`; include `fzf`
+    only when dependency checks have passed.
 - [ ] Add delete/rebuild paths that keep `document`, `document_fts`, and
   `document_vec` in sync in a transaction.
 - [ ] Never treat sidecar metadata as authoritative for OpenCode display fields;
@@ -320,20 +410,45 @@ llama-server \
   stale.
 - [ ] Add a manual dev command for rebuild/debug.
 
-## Phase 9: Hybrid Query And Ranking
+## Phase 9: Search Modes And Ranking
 
-- [ ] Implement FTS query:
+- [ ] Define a minimal plugin-owned search mode boundary:
+  - [ ] input: OpenCode API session candidates, query string, sidecar handle,
+    dependency health, and runtime mode config.
+  - [ ] output: ordered candidate session IDs plus plugin-owned diagnostics.
+  - [ ] no OpenCode-owned local session/message/part types.
+- [ ] Implement hybrid FTS query:
   - [ ] sanitize user input for FTS5.
   - [ ] search title/directory/path/role/part_type/text.
-  - [ ] return `bm25(document_fts)` plus row IDs.
-- [ ] Implement vector query:
+  - [ ] return keyword scores plus row IDs.
+- [ ] Implement hybrid vector query:
   - [ ] embed query.
   - [ ] run `sqlite-vec` nearest-neighbor search.
-  - [ ] return row IDs plus distances.
-- [ ] Implement rank fusion:
-  - [ ] combine FTS and vector ranks.
+  - [ ] return vector scores plus row IDs.
+- [ ] Implement hybrid alpha scoring:
+  - [ ] normalize keyword and vector scores onto compatible ranges.
+  - [ ] apply `score = (1 - alpha) * keyword + alpha * vector`.
+  - [ ] `alpha = 0` produces keyword-only ranking.
+  - [ ] `alpha = 1` produces vector-only ranking when vector is available.
+  - [ ] vector unavailable with `alpha > 0` degrades to keyword-only with a
+    diagnostic state; it does not fail the picker.
+  - [ ] keep alpha parsing/defaulting local to the ranking module.
   - [ ] keep separate diagnostic fields for debugging.
-  - [ ] keep fusion parameters local to the ranking module and covered by tests.
+  - [ ] keep ranking parameters local to the ranking module and covered by
+    tests.
+- [ ] Implement fzf mode:
+  - [ ] collect candidate lines from OpenCode-hydrated session display metadata.
+  - [ ] append sidecar-derived snippets only when available and current.
+  - [ ] encode each candidate with a stable session ID delimiter that cannot be
+    confused with display text.
+  - [ ] call `fzf --filter <query>` non-interactively through the resolved fzf
+    binary.
+  - [ ] parse fzf output back to session IDs.
+  - [ ] preserve fzf result order.
+  - [ ] if fzf exits with no matches, return no matches rather than falling back
+    to a different mode for that query.
+  - [ ] if fzf is missing/unhealthy, report mode unavailable and fall back using
+    the existing install behavior rules.
 - [ ] Group document hits by `session_id`.
 - [ ] Apply session-level boosts only from OpenCode-derived metadata:
   - [ ] exact/fuzzy title match.
@@ -349,15 +464,23 @@ llama-server \
 ## Phase 10: TUI Integration
 
 - [ ] Replace current `searchSessions` in `src/tui.tsx` with a two-stage flow:
-  - [ ] query sidecar for ranked candidate IDs when available.
+  - [ ] resolve the active search mode.
+  - [ ] query hybrid or fzf mode for ranked candidate IDs when available.
   - [ ] hydrate final visible rows from OpenCode API.
   - [ ] fall back to OpenCode API search when sidecar is missing/unusable.
+- [ ] Keep mode selection behind the existing `session.list` picker:
+  - [ ] no new command palette entry.
+  - [ ] no new OpenCode route.
+  - [ ] no native OpenCode dialog override beyond the current picker dialog.
+- [ ] Add a minimal mode control only if it fits the public DialogSelect/plugin
+  UI primitives. Prefer environment/config selection first.
 - [ ] Show states:
   - [ ] searching.
   - [ ] indexing.
   - [ ] vector disabled.
   - [ ] source DB unavailable.
   - [ ] embedding server unavailable.
+  - [ ] fzf unavailable.
   - [ ] sidecar stale/rebuilding.
 - [ ] Preserve built-in picker ergonomics:
   - [ ] debounce search.
@@ -371,7 +494,11 @@ llama-server \
 - [ ] Keep all disposable state under `.opencode-dev/`.
 - [ ] Do not remove XDG/config isolation.
 - [ ] Add optional env passthrough for local llama.cpp server URL.
+- [ ] Add optional env passthrough for `OPENCODE_SMART_PICKER_SEARCH_MODE`,
+  `OPENCODE_SMART_PICKER_HYBRID_ALPHA`, and
+  `OPENCODE_SMART_PICKER_FZF_BIN`.
 - [ ] Add README instructions for:
+  - [ ] installing or building `fzf`.
   - [ ] building/running `llama.cpp`.
   - [ ] downloading `nomic-embed-text-v1.5-GGUF`.
   - [ ] starting `llama-server`.
@@ -381,7 +508,13 @@ llama-server \
 
 - [ ] Add unit tests for text extraction.
 - [ ] Add unit tests for FTS query sanitization.
-- [ ] Add unit tests for rank fusion.
+- [ ] Add unit tests for hybrid alpha scoring:
+  - [ ] keyword-only at `alpha = 0`.
+  - [ ] vector-only at `alpha = 1`.
+  - [ ] blended ranking between `0` and `1`.
+  - [ ] vector-unavailable fallback.
+- [ ] Add unit tests for fzf adapter parsing.
+- [ ] Add integration-style tests for fzf mode with a fake `fzf` executable.
 - [ ] Add unit tests for session grouping and boosts.
 - [ ] Add sidecar migration tests using a temp SQLite DB.
 - [ ] Add source-reader tests using fixture DB rows.
@@ -396,19 +529,25 @@ llama-server \
   - [ ] older schema migration.
   - [ ] extractor version change.
   - [ ] embedding dimension/profile change.
+  - [ ] fzf missing after previously being available.
+  - [ ] search mode changed between runs.
 - [ ] Run `bun run typecheck`.
 - [ ] Run `bun run test`.
 - [ ] Manually verify disposable OpenCode flow:
   - [ ] `bun install`.
   - [ ] `bun install --cwd upstream/opencode`.
+  - [ ] `fzf --version`.
   - [ ] start `llama-server`.
   - [ ] `bun run dev:opencode -- <workspace>`.
   - [ ] press `Ctrl-X`, then `L`.
   - [ ] confirm semantic hits rank above title-only hits.
+  - [ ] confirm fzf mode returns expected fuzzy matches when selected.
 
 ## Phase 13: Quality Gates Before Shipping
 
 - [ ] Search still works with no vector server.
+- [ ] Search still works with no fzf binary unless fzf mode is explicitly
+  selected, and explicit fzf mode reports the missing dependency clearly.
 - [ ] Search still works with no sidecar by falling back to OpenCode API.
 - [ ] Search does not mutate `opencode.db`.
 - [ ] Index rebuild can be safely repeated.
@@ -418,3 +557,5 @@ llama-server \
 - [ ] Sidecar schema version changes trigger deterministic migration/rebuild.
 - [ ] OpenCode API remains the final display/mutation source of truth.
 - [ ] The docs explain privacy tradeoffs and local-only embedding behavior.
+- [ ] The docs explain the two search modes, alpha behavior, and fzf dependency
+  checks.

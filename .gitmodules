@@ -10,3 +10,6 @@
 [submodule "upstream/llama.cpp"]
 	path = upstream/llama.cpp
 	url = https://github.com/ggml-org/llama.cpp.git
+[submodule "upstream/fzf"]
+	path = upstream/fzf
+	url = https://github.com/junegunn/fzf.git

@@ -124,12 +124,6 @@ const tui: TuiPlugin = async (api) => {
       hidden: true,
       onSelect: open,
     },
-    {
-      title: "Smart session search",
-      value: "smart-session-picker.open",
-      category: "Session",
-      onSelect: open,
-    },
   ])
 }
 
