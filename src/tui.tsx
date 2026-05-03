@@ -1,22 +1,12 @@
 /** @jsxImportSource @opentui/solid */
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import type { JSX } from "@opentui/solid"
+import type { Session } from "@opencode-ai/sdk/v2"
 import type { TuiDialogSelectOption, TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
-
-type SessionInfo = {
-  id: string
-  title: string
-  parentID?: string
-  time: {
-    created: number
-    updated: number
-  }
-}
 
 type LoadState = "idle" | "loading" | "error"
 
 const PLUGIN_ID = "local.smart-session-picker"
-const MAX_RESULTS = 50
 
 function timeLabel(value: number) {
   return new Date(value).toLocaleTimeString(undefined, {
@@ -32,9 +22,8 @@ function categoryLabel(value: number) {
   return date.toDateString()
 }
 
-async function searchSessions(api: TuiPluginApi, query: string): Promise<SessionInfo[]> {
+async function searchSessions(api: TuiPluginApi, query: string): Promise<Session[]> {
   const response = await api.client.session.list({
-    limit: MAX_RESULTS,
     search: query.trim() || undefined,
   })
 
@@ -42,16 +31,16 @@ async function searchSessions(api: TuiPluginApi, query: string): Promise<Session
     throw new Error(typeof response.error === "string" ? response.error : "Failed to list sessions")
   }
 
-  return [...((response.data ?? []) as SessionInfo[])]
+  return [...(response.data ?? [])]
     .filter((session) => session.parentID === undefined)
-    .sort((a: SessionInfo, b: SessionInfo) => {
+    .sort((a: Session, b: Session) => {
       const updatedDay = new Date(b.time.updated).setHours(0, 0, 0, 0) - new Date(a.time.updated).setHours(0, 0, 0, 0)
       if (updatedDay !== 0) return updatedDay
       return b.time.created - a.time.created
     })
 }
 
-function optionFor(session: SessionInfo): TuiDialogSelectOption<string> {
+function optionFor(session: Session): TuiDialogSelectOption<string> {
   return {
     title: session.title,
     value: session.id,
@@ -87,7 +76,7 @@ function statusOption(state: LoadState, query: string, error: string | undefined
 
 function SmartSessionDialog(props: { api: TuiPluginApi }) {
   const [query, setQuery] = createSignal("")
-  const [sessions, setSessions] = createSignal<SessionInfo[]>([])
+  const [sessions, setSessions] = createSignal<Session[]>([])
   const [state, setState] = createSignal<LoadState>("idle")
   const [error, setError] = createSignal<string>()
   let request = 0
