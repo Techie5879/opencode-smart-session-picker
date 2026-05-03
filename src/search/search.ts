@@ -19,13 +19,23 @@ function orderByIDs(sessions: Session[], ids: string[]) {
   return ids.map((id) => byID.get(id)).filter((session): session is Session => Boolean(session))
 }
 
-async function ensureBackgroundIndex(api: TuiPluginApi, sessions: Session[], sidecar: SearchSidecar, diagnostics: SearchDiagnostic[]) {
+async function ensureBackgroundIndex(
+  api: TuiPluginApi,
+  sessions: Session[],
+  sidecar: SearchSidecar,
+  diagnostics: SearchDiagnostic[],
+  blocking = false,
+) {
   if (indexedDbPath !== sidecar.config.searchDbPath) {
     indexedDbPath = sidecar.config.searchDbPath
     indexedOnce = false
   }
-  if (indexedOnce || indexing) return
-  if (sidecar.hasDocuments()) {
+  if (indexedOnce && !sidecar.needsReindex(sessions)) return
+  if (indexing) {
+    if (blocking) await indexing
+    return
+  }
+  if (!sidecar.needsReindex(sessions)) {
     indexedOnce = true
     return
   }
@@ -54,6 +64,7 @@ async function ensureBackgroundIndex(api: TuiPluginApi, sessions: Session[], sid
     .finally(() => {
       indexing = undefined
     })
+  if (blocking) await indexing
 }
 
 export async function searchSessions(
@@ -82,7 +93,7 @@ export async function searchSessions(
   let sidecar: SearchSidecar | undefined
   try {
     sidecar = await SearchSidecar.open(config)
-    await ensureBackgroundIndex(api, allSessions, sidecar, diagnostics)
+    await ensureBackgroundIndex(api, allSessions, sidecar, diagnostics, true)
   } catch (err) {
     diagnostics.push({
       kind: "sidecar-unavailable",

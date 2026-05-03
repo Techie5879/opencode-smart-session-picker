@@ -239,6 +239,21 @@ export class SearchSidecar {
     return row.found === 1
   }
 
+  needsReindex(sessions: Array<{ id: string; time?: { updated: number } }>) {
+    if (!this.hasDocuments()) return true
+    if (!sessions.length) return false
+
+    const placeholders = sessions.map(() => "?").join(",")
+    const indexed = this.db
+      .prepare(`select count(distinct session_id) as count from indexed_session where session_id in (${placeholders})`)
+      .get(...sessions.map((session) => session.id)) as { count: number }
+    if (indexed.count < sessions.length) return true
+
+    const lastIndexed = Number(this.getMeta("last_indexed_at")?.value ?? 0)
+    const latestSessionUpdate = Math.max(...sessions.map((session) => session.time?.updated ?? 0))
+    return Number.isFinite(latestSessionUpdate) && latestSessionUpdate > lastIndexed
+  }
+
   rebuildCorpus(corpus: SourceSessionCorpus[]) {
     const documents = corpus.flatMap((entry) => extractSessionDocuments(entry.session, entry.messages))
     this.replaceDocuments(documents)
@@ -376,7 +391,7 @@ export class SearchSidecar {
     const placeholders = sessionIDs.map(() => "?").join(",")
     const rows = this.db
       .prepare(`
-        select session_id as sessionID, substr(text, 1, 240) as snippet
+        select session_id as sessionID, group_concat(text, ' ') as snippet
         from document
         where session_id in (${placeholders})
         group by session_id

@@ -10,6 +10,7 @@ import { checkSearchEnvironment } from "./search/status"
 import type { DependencyState, SearchDependencyStatus, SearchEnvironmentStatus, SearchMode } from "./search/types"
 
 const PLUGIN_ID = "local.smart-session-picker"
+const SEARCH_DEBOUNCE_MS = 300
 
 function dateCategory(updated: number) {
   const date = new Date(updated)
@@ -109,15 +110,13 @@ function StatusBar(props: {
   const theme = props.api.theme.current
 
   return (
-    <Show when={props.environment}>
-      <box flexDirection="column" paddingLeft={4} paddingRight={4} paddingBottom={1}>
-        <Show when={props.modeError}>
-          <box paddingBottom={0}>
-            <text fg={theme.warning} wrapMode="none">
-              {props.modeError}
-            </text>
-          </box>
-        </Show>
+    <box height={5} flexShrink={0} flexDirection="column" paddingLeft={4} paddingRight={4} paddingBottom={1}>
+      <box height={1} flexShrink={0}>
+        <text fg={theme.warning} wrapMode="none">
+          {props.modeError ?? " "}
+        </text>
+      </box>
+      <Show when={props.environment}>
         <For each={props.environment!.modes}>
           {(modeStatus) => {
             const deps = () => props.environment!.modeDependencies[modeStatus.mode as SearchMode]
@@ -147,13 +146,13 @@ function StatusBar(props: {
             )
           }}
         </For>
-        <box flexDirection="row" gap={0} paddingTop={1}>
-          <text fg={theme.textMuted} wrapMode="none">
-            {"tab switch mode"}
-          </text>
-        </box>
+      </Show>
+      <box height={1} flexShrink={0} paddingTop={1}>
+        <text fg={theme.textMuted} wrapMode="none">
+          {"tab switch mode"}
+        </text>
       </box>
-    </Show>
+    </box>
   )
 }
 
@@ -162,13 +161,15 @@ function PreviewPane(props: {
   preview: SessionPreview | undefined
   loading: boolean
   query: string
+  height: number
 }) {
   const theme = props.api.theme.current
-  const dims = useTerminalDimensions()
-  const scrollHeight = () => Math.max(6, Math.floor(dims().height / 2) - 4)
+  const scrollHeight = () => Math.max(6, props.height - 3)
 
   return (
     <box
+      height={props.height}
+      flexShrink={0}
       flexGrow={2}
       flexBasis={0}
       flexDirection="column"
@@ -190,7 +191,7 @@ function PreviewPane(props: {
           </box>
         }
       >
-        <scrollbox maxHeight={scrollHeight()} scrollbarOptions={{ visible: false }}>
+        <scrollbox height={scrollHeight()} scrollbarOptions={{ visible: false }}>
           <For each={props.preview!.lines}>
             {(line) => (
               <Show
@@ -239,6 +240,7 @@ function PreviewPane(props: {
 }
 
 function SmartSessionDialog(props: { api: TuiPluginApi }) {
+  const dims = useTerminalDimensions()
   const [mode, setMode] = createSignal<SearchMode>(resolveSearchConfig().mode)
   const [query, setQuery] = createSignal("")
   const [sessions, setSessions] = createSignal<{ id: string; title: string; updated: number }[]>([])
@@ -246,15 +248,18 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
   const [modeError, setModeError] = createSignal<string>()
   const [preview, setPreview] = createSignal<SessionPreview>()
   const [previewLoading, setPreviewLoading] = createSignal(false)
+  const [searchLoading, setSearchLoading] = createSignal(false)
   const [selectedSessionID, setSelectedSessionID] = createSignal<string>()
   let request = 0
   let statusRequest = 0
   let previewRequest = 0
   let timer: ReturnType<typeof setTimeout> | undefined
   let previewTimer: ReturnType<typeof setTimeout> | undefined
+  const pickerHeight = () => Math.max(12, Math.floor(dims().height / 2) - 2)
 
   async function refresh(nextQuery: string, nextMode: SearchMode) {
     const id = ++request
+    setSearchLoading(true)
     try {
       const result = await searchSessions(props.api, nextQuery, { mode: nextMode })
       if (id !== request) return
@@ -280,6 +285,8 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
       if (id !== request) return
       setModeError(undefined)
       setSessions([])
+    } finally {
+      if (id === request) setSearchLoading(false)
     }
   }
 
@@ -318,7 +325,7 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
     const q = query()
     const m = mode()
     if (timer) clearTimeout(timer)
-    timer = setTimeout(() => void refresh(q, m), 150)
+    timer = setTimeout(() => void refresh(q, m), SEARCH_DEBOUNCE_MS)
   })
 
   createEffect(() => {
@@ -354,8 +361,16 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
       props.api.ui.toast({ variant: "warning", message: modeStatus.message ?? `${next} mode is unavailable.` })
       return
     }
+    request++
     setModeError(undefined)
     setMode(next)
+  }
+
+  function updateQuery(next: string) {
+    if (next === query()) return
+    request++
+    setSearchLoading(true)
+    setQuery(next)
   }
 
   useKeyboard((evt) => {
@@ -378,14 +393,14 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
 
   return (
     <box flexDirection="column">
-      <box flexDirection="row">
-        <box flexGrow={3} flexBasis={0}>
+      <box flexDirection="row" height={pickerHeight()} flexShrink={0}>
+        <box flexGrow={3} flexBasis={0} height={pickerHeight()} flexShrink={0}>
           <DialogSelect
             title={`Sessions · ${mode()}`}
             placeholder={`Search with ${mode()}...`}
             options={options()}
             skipFilter={true}
-            onFilter={(q: string) => setQuery(q)}
+            onFilter={updateQuery}
             onMove={(opt: { value: string }) => {
               setSelectedSessionID(opt.value)
               loadPreview(opt.value)
@@ -396,9 +411,19 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
             }}
           />
         </box>
-        <PreviewPane api={props.api} preview={preview()} loading={previewLoading()} query={query()} />
+        <PreviewPane
+          api={props.api}
+          preview={preview()}
+          loading={previewLoading()}
+          query={query()}
+          height={pickerHeight()}
+        />
       </box>
-      <StatusBar api={props.api} environment={environment()} modeError={modeError()} />
+      <StatusBar
+        api={props.api}
+        environment={environment()}
+        modeError={modeError() ?? (searchLoading() && !previewLoading() ? "Searching..." : undefined)}
+      />
     </box>
   )
 }

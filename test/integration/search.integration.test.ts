@@ -97,6 +97,14 @@ function createSourceDb(file: string) {
     3,
     JSON.stringify({ type: "text", text: "Investigate subsetgeneratefamilies regression in semantic ranking" }),
   )
+  insertPart.run(
+    "prt_one_later",
+    "msg_one",
+    "ses_one",
+    4,
+    4,
+    JSON.stringify({ type: "text", text: "Later attachment mention: resume.pdf should stay searchable" }),
+  )
 
   insertSession.run("ses_two", "two", "proj", "/repo", "packages/cli", "Another title", 1, 9)
   insertMessage.run(
@@ -142,9 +150,26 @@ describe("search integration", () => {
     const sidecar = await SearchSidecar.open(config(searchDb))
     sidecar.rebuildCorpus(corpus)
     const results = sidecar.searchFts("subsetgeneratefamilies")
+    const snippets = sidecar.snippetsForSessions(["ses_one"])
+    const needsCurrentReindex = sidecar.needsReindex(corpus.map((entry) => entry.session))
+    const needsMissingReindex = sidecar.needsReindex([
+      ...corpus.map((entry) => entry.session),
+      {
+        id: "ses_missing",
+        slug: "missing",
+        projectID: "proj",
+        version: "test",
+        directory: "/repo",
+        title: "Missing",
+        time: { created: 1, updated: 2 },
+      },
+    ])
     sidecar.close()
 
     expect(results[0]?.sessionID).toBe("ses_one")
+    expect(snippets.get("ses_one")).toContain("resume.pdf")
+    expect(needsCurrentReindex).toBe(false)
+    expect(needsMissingReindex).toBe(true)
   })
 
   test("runs fzf mode through an executable and parses NUL-delimited session IDs", async () => {
