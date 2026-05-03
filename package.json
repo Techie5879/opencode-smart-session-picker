@@ -1,0 +1,24 @@
+{
+  "name": "opencode-smart-session-picker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Prototype OpenCode TUI plugin that shadows the built-in session picker.",
+  "exports": {
+    "./tui": "./src/tui.tsx"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "*",
+    "@opentui/solid": "*",
+    "solid-js": "^1.9.10"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "opencode": ">=1.0.0"
+  }
+}
