@@ -10,6 +10,26 @@ This repo is a prototype OpenCode TUI plugin that replaces the built-in session 
 - Use `bun run typecheck` for TypeScript validation.
 - Use `bun test` for the repo check suite. Right now this intentionally runs `tsc --noEmit`.
 - `bunfig.toml` scopes Bun test discovery to `test/` so upstream submodule tests are not collected.
+- Use `bun run dev:opencode -- <workspace>` to launch the plugin in upstream OpenCode without touching the user's real OpenCode config/state.
+
+## Disposable OpenCode Plugin Testing
+
+OpenCode's repo recommends `bun dev <directory>` as the local equivalent of the installed `opencode <directory>` command. For this plugin repo, do not edit `~/.config/opencode/tui.json` to test.
+
+1. Install this repo's dependencies with `bun install`.
+2. Install upstream OpenCode dependencies once with `bun install --cwd upstream/opencode`.
+3. Run `bun run dev:opencode -- <workspace>` from this repo. Omit `<workspace>` to open OpenCode against this repo.
+4. In the TUI, press `Ctrl-X` then `L`. The smart session picker should replace the built-in session list.
+
+The dev launcher writes only under `.opencode-dev/` in this repo and sets these environment variables for the child OpenCode process:
+
+- `OPENCODE_TUI_CONFIG=.opencode-dev/tui.json`, containing a file plugin entry for `src/tui.tsx`.
+- `OPENCODE_CONFIG_DIR=.opencode-dev/config`.
+- `OPENCODE_TEST_HOME=.opencode-dev/home`.
+- `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, and `XDG_CACHE_HOME` under `.opencode-dev/xdg`.
+- `OPENCODE_DISABLE_PROJECT_CONFIG=true`, so project `.opencode` configs are not loaded during this disposable run.
+
+Because the dev run isolates XDG data/state too, it will not show the user's real OpenCode sessions. That is intentional for safe plugin testing. Do not remove that isolation unless a task explicitly asks to test against real local OpenCode data.
 
 ## Boundaries
 

@@ -8,6 +8,7 @@
     "./tui": "./src/tui.tsx"
   },
   "scripts": {
+    "dev:opencode": "bun run scripts/dev-opencode.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

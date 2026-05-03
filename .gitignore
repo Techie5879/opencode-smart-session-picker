@@ -1,3 +1,4 @@
 node_modules/
 dist/
+.opencode-dev/
 .DS_Store
