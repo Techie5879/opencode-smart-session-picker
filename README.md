@@ -12,6 +12,15 @@ From this repo:
 bun install
 ```
 
+Useful checks:
+
+```bash
+bun run typecheck
+bun test
+```
+
+`bun test` is scoped by `bunfig.toml` to this repo's `test/` directory, so it does not collect tests from the OpenCode/OpenTUI reference submodules in `upstream/`.
+
 Add it to `~/.config/opencode/tui.json`:
 
 ```json

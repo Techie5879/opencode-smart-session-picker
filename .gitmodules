@@ -1,0 +1,6 @@
+[submodule "upstream/opentui"]
+	path = upstream/opentui
+	url = https://github.com/anomalyco/opentui.git
+[submodule "upstream/opencode"]
+	path = upstream/opencode
+	url = https://github.com/anomalyco/opencode.git
