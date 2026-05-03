@@ -9,7 +9,6 @@ This repo is a prototype OpenCode TUI plugin that replaces the built-in session 
 - Use `bun install` for dependencies.
 - Use `bun run typecheck` for TypeScript validation.
 - Use `bun test` for the repo check suite. Right now this intentionally runs `tsc --noEmit`.
-- `bunfig.toml` scopes Bun test discovery to `test/` so upstream submodule tests are not collected.
 - Use `bun run dev:opencode -- <workspace>` to launch the plugin in upstream OpenCode without touching the user's real OpenCode config/state.
 
 ## Disposable OpenCode Plugin Testing
