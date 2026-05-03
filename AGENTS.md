@@ -49,8 +49,8 @@ Because the dev run isolates XDG data/state too, it will not show the user's rea
 ## Implementation Notes
 
 - The plugin shadows the built-in session picker by registering `value: "session.list"` and `keybind: "session_list"`.
-- `api.ui.DialogSelect` is the preferred first UI surface because it is the public OpenCode TUI plugin dialog API.
-- Search implementation lives under `src/search/`. Keep `src/tui.tsx` as a thin DialogSelect wrapper around `searchSessions`.
+- Use public OpenCode TUI plugin APIs only. `api.ui.DialogSelect` is acceptable for simple picker rows; use `api.ui.dialog.replace` with OpenTUI primitives when the plugin needs distinct status/control surfaces.
+- Search implementation lives under `src/search/`. Keep `src/tui.tsx` as a thin OpenTUI dialog wrapper around `searchSessions`, the mode selector, dependency status chips, and the session result list.
 - The only OpenCode override is the built-in session picker command path and its related dialog. Do not add extra command palette entries, routes, keybind overrides, storage mutations, or config reads unless a task explicitly asks for them.
 - Use OpenCode SDK/plugin types for OpenCode-owned data. Local types are allowed only for plugin-owned sidecar documents, ranking diagnostics, dependency health, and search configuration.
 - Keep `src/tui.tsx` lean: local code should exist only where OpenCode does not expose the native picker internals through the plugin API, or where the semantic search feature needs plugin-owned sidecar behavior.

@@ -15,6 +15,7 @@
   "dependencies": {
     "@opencode-ai/plugin": "*",
     "@opencode-ai/sdk": "*",
+    "@opentui/core": "*",
     "@opentui/solid": "*",
     "solid-js": "^1.9.10"
   },

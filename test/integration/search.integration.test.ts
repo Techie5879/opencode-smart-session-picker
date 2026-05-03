@@ -10,6 +10,7 @@ import { runFzfSearch } from "../../src/search/fzf"
 import { blendHybridScores } from "../../src/search/ranking"
 import { SearchSidecar } from "../../src/search/sidecar"
 import { readSourceCorpusFromDb } from "../../src/search/source-db"
+import { checkSearchEnvironment } from "../../src/search/status"
 
 const servers: Array<{ stop: () => void }> = []
 
@@ -181,6 +182,55 @@ process.stdout.write(output + (input.includes("\\0") ? "\\0" : "\\n"))
     })
 
     expect(result).toEqual({ status: "ok", sessionIDs: ["ses_one"] })
+  })
+
+  test("reports TUI search modes and dependency readiness from real local checks", async () => {
+    const sourceDb = await tempPath("opencode.db")
+    const searchDb = await tempPath("opencode-search.db")
+    const fzf = await tempPath("fake-fzf")
+    await writeFile(sourceDb, "")
+    await writeFile(
+      fzf,
+      `#!/usr/bin/env bun
+const args = process.argv.slice(2)
+if (args.includes("--version")) {
+  console.log("fake-fzf 1.0")
+  process.exit(0)
+}
+const input = await new Response(Bun.stdin.stream()).text()
+process.stdout.write(input.split(/\\n/).filter((line) => line.includes("a")).join("\\n") + "\\n")
+`,
+    )
+    await chmod(fzf, 0o755)
+
+    const previous = {
+      sourceDb: process.env.OPENCODE_SMART_PICKER_SOURCE_DB,
+      searchDb: process.env.OPENCODE_SMART_PICKER_SEARCH_DB,
+      fzfBin: process.env.OPENCODE_SMART_PICKER_FZF_BIN,
+      disableVector: process.env.OPENCODE_SMART_PICKER_DISABLE_VECTOR,
+    }
+    process.env.OPENCODE_SMART_PICKER_SOURCE_DB = sourceDb
+    process.env.OPENCODE_SMART_PICKER_SEARCH_DB = searchDb
+    process.env.OPENCODE_SMART_PICKER_FZF_BIN = fzf
+    process.env.OPENCODE_SMART_PICKER_DISABLE_VECTOR = "1"
+    try {
+      const status = await checkSearchEnvironment({ mode: "fzf" })
+      expect(status.mode).toBe("fzf")
+      expect(status.modes.find((mode) => mode.mode === "fzf")?.state).toBe("available")
+      expect(status.dependencies.find((dependency) => dependency.name === "fzf")?.state).toBe("available")
+      expect(status.dependencies.find((dependency) => dependency.name === "llama-server")?.state).toBe("disabled")
+      expect(status.dependencies.find((dependency) => dependency.name === "sqlite-vec")?.state).toBe("disabled")
+      expect(status.dependencies.find((dependency) => dependency.name === "sidecar index")?.state).toBe("available")
+    } finally {
+      if (previous.sourceDb === undefined) delete process.env.OPENCODE_SMART_PICKER_SOURCE_DB
+      else process.env.OPENCODE_SMART_PICKER_SOURCE_DB = previous.sourceDb
+      if (previous.searchDb === undefined) delete process.env.OPENCODE_SMART_PICKER_SEARCH_DB
+      else process.env.OPENCODE_SMART_PICKER_SEARCH_DB = previous.searchDb
+      if (previous.fzfBin === undefined) delete process.env.OPENCODE_SMART_PICKER_FZF_BIN
+      else process.env.OPENCODE_SMART_PICKER_FZF_BIN = previous.fzfBin
+      if (previous.disableVector === undefined) delete process.env.OPENCODE_SMART_PICKER_DISABLE_VECTOR
+      else process.env.OPENCODE_SMART_PICKER_DISABLE_VECTOR = previous.disableVector
+    }
   })
 
   test("validates llama.cpp-compatible embedding responses from a real local HTTP server", async () => {

@@ -4,7 +4,7 @@ export type SearchMode = "hybrid" | "fzf"
 
 export type VectorState = "enabled" | "disabled" | "unavailable" | "stale"
 
-export type DependencyState = "available" | "unavailable" | "error"
+export type DependencyState = "available" | "unavailable" | "error" | "disabled" | "checking"
 
 export type SearchDiagnostic = {
   kind:
@@ -59,6 +59,26 @@ export type RankedCandidate = {
 export type SearchResponse = {
   sessions: Session[]
   diagnostics: SearchDiagnostic[]
+}
+
+export type SearchModeStatus = {
+  mode: SearchMode
+  state: DependencyState
+  active: boolean
+  message: string
+}
+
+export type SearchDependencyStatus = {
+  name: "OpenCode DB" | "sidecar index" | "sqlite-vec" | "llama-server" | "fzf"
+  state: DependencyState
+  message: string
+}
+
+export type SearchEnvironmentStatus = {
+  mode: SearchMode
+  alpha: number
+  modes: SearchModeStatus[]
+  dependencies: SearchDependencyStatus[]
 }
 
 export type SourceSessionCorpus = {

@@ -1,42 +1,121 @@
 /** @jsxImportSource @opentui/solid */
-import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
-import type { Session } from "@opencode-ai/sdk/v2"
+import type { RGBA } from "@opentui/core"
+import { useKeyboard } from "@opentui/solid"
+import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import { resolveSearchConfig } from "./search/config"
 import { searchSessions } from "./search/search"
+import { checkSearchEnvironment } from "./search/status"
+import type { DependencyState, SearchDependencyStatus, SearchEnvironmentStatus, SearchMode } from "./search/types"
 
 const PLUGIN_ID = "local.smart-session-picker"
 
+function dateCategory(updated: number) {
+  const date = new Date(updated)
+  if (date.toDateString() === new Date().toDateString()) return "Today"
+  return date.toDateString()
+}
+
+function timeFooter(updated: number) {
+  return new Date(updated).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
+function stateWord(state: DependencyState) {
+  if (state === "available") return "ok"
+  if (state === "disabled") return "off"
+  if (state === "checking") return "..."
+  if (state === "error") return "err"
+  return "missing"
+}
+
+function stateColor(theme: TuiPluginApi["theme"]["current"], state: DependencyState): RGBA {
+  if (state === "available") return theme.success
+  if (state === "disabled") return theme.textMuted
+  if (state === "checking") return theme.info
+  if (state === "error") return theme.error
+  return theme.warning
+}
+
+function shortName(name: SearchDependencyStatus["name"]) {
+  if (name === "OpenCode DB") return "db"
+  if (name === "sidecar index") return "index"
+  if (name === "sqlite-vec") return "vec"
+  if (name === "llama-server") return "llama"
+  return name
+}
+
+function StatusBar(props: { api: TuiPluginApi; environment: SearchEnvironmentStatus | undefined }) {
+  const theme = props.api.theme.current
+  return (
+    <Show when={props.environment}>
+      <box paddingLeft={4} paddingRight={4} paddingBottom={1} flexDirection="row" gap={0}>
+        <For each={props.environment!.dependencies}>
+          {(dep, i) => (
+            <box flexDirection="row">
+              <Show when={i() > 0}>
+                <text fg={theme.textMuted}>{" · "}</text>
+              </Show>
+              <text fg={theme.textMuted}>{shortName(dep.name)} </text>
+              <text fg={stateColor(theme, dep.state)}>{stateWord(dep.state)}</text>
+            </box>
+          )}
+        </For>
+        <text fg={theme.textMuted}>{"  tab switch mode"}</text>
+      </box>
+    </Show>
+  )
+}
+
 function SmartSessionDialog(props: { api: TuiPluginApi }) {
+  const [mode, setMode] = createSignal<SearchMode>(resolveSearchConfig().mode)
   const [query, setQuery] = createSignal("")
-  const [sessions, setSessions] = createSignal<Session[]>([])
-  const [diagnostics, setDiagnostics] = createSignal<string[]>([])
-  const [loading, setLoading] = createSignal(true)
-  const [error, setError] = createSignal<string>()
+  const [sessions, setSessions] = createSignal<{ id: string; title: string; updated: number }[]>([])
+  const [environment, setEnvironment] = createSignal<SearchEnvironmentStatus>()
   let request = 0
+  let statusRequest = 0
   let timer: ReturnType<typeof setTimeout> | undefined
 
-  async function refresh(nextQuery: string) {
+  async function refresh(nextQuery: string, nextMode: SearchMode) {
     const id = ++request
-    setLoading(true)
-    setError(undefined)
-
     try {
-      const result = await searchSessions(props.api, nextQuery)
+      const result = await searchSessions(props.api, nextQuery, { mode: nextMode })
       if (id !== request) return
-      setSessions(result.sessions)
-      setDiagnostics(result.diagnostics.map((diagnostic) => diagnostic.message))
-      setLoading(false)
-    } catch (err) {
+      setSessions(
+        result.sessions.map((s) => ({
+          id: s.id,
+          title: s.title || `Session ${s.id.slice(0, 8)}`,
+          updated: s.time.updated,
+        })),
+      )
+    } catch {
       if (id !== request) return
-      setError(err instanceof Error ? err.message : String(err))
-      setLoading(false)
+      setSessions([])
+    }
+  }
+
+  async function refreshEnvironment(nextMode: SearchMode) {
+    const id = ++statusRequest
+    try {
+      const result = await checkSearchEnvironment({ mode: nextMode })
+      if (id !== statusRequest) return
+      setEnvironment(result)
+    } catch {
+      /* swallow – status bar just stays hidden */
     }
   }
 
   createEffect(() => {
-    const nextQuery = query()
+    const q = query()
+    const m = mode()
     if (timer) clearTimeout(timer)
-    timer = setTimeout(() => void refresh(nextQuery), 150)
+    timer = setTimeout(() => void refresh(q, m), 150)
+  })
+
+  createEffect(() => {
+    void refreshEnvironment(mode())
   })
 
   onMount(() => {
@@ -46,76 +125,55 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
   onCleanup(() => {
     if (timer) clearTimeout(timer)
     request++
+    statusRequest++
   })
 
-  const options = createMemo(() => {
-    const failure = error()
-    if (failure) {
-      return [
-        {
-          title: "Failed to load sessions",
-          description: failure,
-          value: "__error__",
-          disabled: true,
-        },
-      ]
+  function toggleMode() {
+    const next: SearchMode = mode() === "hybrid" ? "fzf" : "hybrid"
+    if (next === "fzf") {
+      const env = environment()
+      const fzf = env?.modes.find((m) => m.mode === "fzf")
+      if (fzf?.state !== "available") {
+        props.api.ui.toast({ variant: "warning", message: fzf?.message ?? "fzf is unavailable." })
+        return
+      }
     }
+    setMode(next)
+  }
 
-    if (loading()) {
-      return [
-        {
-          title: query() ? `Searching for "${query()}"` : "Loading sessions",
-          value: "__loading__",
-          disabled: true,
-        },
-      ]
+  useKeyboard((evt) => {
+    if (evt.name === "tab") {
+      evt.preventDefault()
+      evt.stopPropagation()
+      toggleMode()
     }
-
-    const rows = sessions().map((session) => ({
-      title: session.title,
-      value: session.id,
-      category:
-        new Date(session.time.updated).toDateString() === new Date().toDateString()
-          ? "Today"
-          : new Date(session.time.updated).toDateString(),
-      footer: session.path ?? session.directory,
-    }))
-    const statusRows = diagnostics().map((description, index) => ({
-      title: "Search status",
-      description,
-      value: `__diagnostic_${index}__`,
-      disabled: true,
-    }))
-    if (rows.length) return [...statusRows, ...rows]
-
-    return [
-      ...statusRows,
-      {
-        title: query() ? "No matching sessions" : "No sessions found",
-        value: "__empty__",
-        disabled: true,
-      },
-    ]
   })
+
+  const options = () =>
+    sessions().map((s) => ({
+      title: s.title,
+      value: s.id,
+      category: dateCategory(s.updated),
+      footer: timeFooter(s.updated),
+    }))
+
+  const { DialogSelect } = props.api.ui
 
   return (
-    <props.api.ui.DialogSelect
-      title="Smart Sessions"
-      placeholder="Search sessions..."
-      options={options()}
-      skipFilter={true}
-      current={
-        props.api.route.current.name === "session" && props.api.route.current.params
-          ? String(props.api.route.current.params.sessionID)
-          : undefined
-      }
-      onFilter={setQuery}
-      onSelect={(option) => {
-        if (option.disabled) return
-        props.api.route.navigate("session", { sessionID: option.value })
-        props.api.ui.dialog.clear()
-      }}
-    />
+    <box>
+      <DialogSelect
+        title={`Sessions · ${mode()}`}
+        placeholder={`Search with ${mode()}...`}
+        options={options()}
+        skipFilter={true}
+        onFilter={(q: string) => setQuery(q)}
+        onSelect={(opt: { value: string }) => {
+          props.api.route.navigate("session", { sessionID: opt.value })
+          props.api.ui.dialog.clear()
+        }}
+      />
+      <StatusBar api={props.api} environment={environment()} />
+    </box>
   )
 }
 

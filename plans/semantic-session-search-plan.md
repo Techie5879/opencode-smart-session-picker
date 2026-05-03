@@ -500,15 +500,24 @@ llama-server \
   - [x] no new command palette entry.
   - [x] no new OpenCode route.
   - [x] no native OpenCode dialog override beyond the current picker dialog.
-- [ ] Add a minimal mode control only if it fits the public DialogSelect/plugin
-  UI primitives. Prefer environment/config selection first.
+- [x] Add a minimal mode control using public plugin APIs and OpenTUI
+  primitives:
+  - [x] render `hybrid` and `fzf` as distinct status/control chips in the
+    existing picker dialog.
+  - [x] switch the current picker session without adding commands, routes, or
+    native OpenCode overrides.
+  - [x] disable fzf selection when the fzf executable/smoke test is not
+    available.
+  - [x] keep dependency state out of the selectable session list.
 - [x] Show states:
   - [x] searching.
   - [x] indexing.
   - [x] vector disabled.
-  - [ ] source DB unavailable.
-  - [ ] embedding server unavailable.
+  - [x] source DB unavailable.
+  - [x] embedding server unavailable.
   - [x] fzf unavailable.
+  - [x] sqlite-vec unavailable.
+  - [x] sidecar index available/empty/error.
   - [ ] sidecar stale/rebuilding.
 - [ ] Preserve built-in picker ergonomics:
   - [ ] debounce search.

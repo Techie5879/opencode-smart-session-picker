@@ -52,6 +52,11 @@ Restart `opencode`, then press `Ctrl-X` followed by `L`.
 The default mode is `hybrid`, which currently uses the local SQLite keyword
 index and falls back to OpenCode session search when needed.
 
+Inside the smart session dialog, a separate OpenTUI status band shows mode chips
+for `hybrid` and `fzf`; press `Tab` to switch for the current picker session.
+Dependency chips show whether OpenCode DB access, the sidecar index,
+`sqlite-vec`, `llama-server`, and `fzf` are ready, missing, errored, or disabled.
+
 To use another mode for a run:
 
 ```bash

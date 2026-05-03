@@ -7,7 +7,7 @@ import { runFzfSearch } from "./fzf"
 import { listOpenCodeSessions, loadCorpusFromOpenCodeApi } from "./opencode-api"
 import { blendHybridScores } from "./ranking"
 import { SearchSidecar } from "./sidecar"
-import type { RankedCandidate, SearchDiagnostic, SearchResponse } from "./types"
+import type { RankedCandidate, SearchConfig, SearchDiagnostic, SearchMode, SearchResponse } from "./types"
 import { extractSessionDocuments } from "./extractor"
 
 let indexing: Promise<void> | undefined
@@ -61,8 +61,12 @@ async function fallback(api: TuiPluginApi, query: string, diagnostics: SearchDia
   return { sessions: await listOpenCodeSessions(api, query), diagnostics }
 }
 
-export async function searchSessions(api: TuiPluginApi, query: string): Promise<SearchResponse> {
-  const config = resolveSearchConfig()
+export async function searchSessions(
+  api: TuiPluginApi,
+  query: string,
+  input: { mode?: SearchMode } = {},
+): Promise<SearchResponse> {
+  const config: SearchConfig = { ...resolveSearchConfig(), ...input }
   const diagnostics: SearchDiagnostic[] = []
   const allSessions = await listOpenCodeSessions(api)
 
