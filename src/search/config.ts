@@ -87,6 +87,7 @@ export function resolveSearchConfig(env: NodeJS.ProcessEnv = process.env): Searc
     disableVector: boolEnv(env.OPENCODE_SMART_PICKER_DISABLE_VECTOR),
     documentPrefix: "search_document: ",
     queryPrefix: "search_query: ",
+    sqliteLibPath: env.OPENCODE_SMART_PICKER_SQLITE_LIB,
     sqliteVecExtension: env.OPENCODE_SMART_PICKER_SQLITE_VEC_EXT,
   }
 }

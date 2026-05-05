@@ -110,48 +110,55 @@ function StatusBar(props: {
   const theme = props.api.theme.current
 
   return (
-    <box height={5} flexShrink={0} flexDirection="column" paddingLeft={4} paddingRight={4} paddingBottom={1}>
-      <box height={1} flexShrink={0}>
-        <text fg={theme.warning} wrapMode="none">
-          {props.modeError ?? " "}
-        </text>
-      </box>
-      <Show when={props.environment}>
+    <box flexDirection="column" paddingLeft={4} paddingRight={4} paddingBottom={1}>
+      <Show
+        when={props.environment}
+        fallback={
+          <>
+            <box height={1} flexShrink={0} />
+            <box>
+              <text fg={theme.textMuted} wrapMode="none">
+                {"tab to switch mode"}
+              </text>
+            </box>
+          </>
+        }
+      >
         <For each={props.environment!.modes}>
           {(modeStatus) => {
             const deps = () => props.environment!.modeDependencies[modeStatus.mode as SearchMode]
             return (
-              <box flexDirection="row" gap={0}>
-                <text fg={modeLabelColor(theme, deps())} wrapMode="none">
-                  {modeStatus.mode.padEnd(8)}
+              <box>
+                <text wrapMode="none">
+                  <span style={{ fg: modeLabelColor(theme, deps()) }}>{modeStatus.mode}</span>
+                  <span style={{ fg: theme.textMuted }}>{"  "}</span>
+                  <For each={deps()}>
+                    {(dep, i) => (
+                      <>
+                        <Show when={i() > 0}>
+                          <span style={{ fg: theme.textMuted }}>{" · "}</span>
+                        </Show>
+                        <span style={{ fg: theme.textMuted }}>{shortName(dep.name)}</span>
+                        <span style={{ fg: stateColor(theme, dep.state) }}>{` ${stateWord(dep.state)}`}</span>
+                      </>
+                    )}
+                  </For>
                 </text>
-                <For each={deps()}>
-                  {(dep, i) => (
-                    <box flexDirection="row" flexShrink={0}>
-                      <Show when={i() > 0}>
-                        <text fg={theme.textMuted} wrapMode="none">
-                          {" · "}
-                        </text>
-                      </Show>
-                      <text fg={theme.textMuted} wrapMode="none">
-                        {shortName(dep.name)}{" "}
-                      </text>
-                      <text fg={stateColor(theme, dep.state)} wrapMode="none">
-                        {stateWord(dep.state)}
-                      </text>
-                    </box>
-                  )}
-                </For>
               </box>
             )
           }}
         </For>
+        <box height={1} flexShrink={0}>
+          <text fg={theme.warning} wrapMode="none">
+            {props.modeError ?? " "}
+          </text>
+        </box>
+        <box>
+          <text fg={theme.textMuted} wrapMode="none">
+            {"tab to switch mode"}
+          </text>
+        </box>
       </Show>
-      <box height={1} flexShrink={0} paddingTop={1}>
-        <text fg={theme.textMuted} wrapMode="none">
-          {"tab switch mode"}
-        </text>
-      </box>
     </box>
   )
 }
@@ -429,18 +436,19 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
 }
 
 const tui: TuiPlugin = async (api) => {
-  const open = () => api.ui.dialog.replace(() => <SmartSessionDialog api={api} />)
-
-  api.command.register(() => [
-    {
-      title: "Smart session search",
-      value: "session.list",
-      keybind: "session_list",
-      category: "Session",
-      hidden: true,
-      onSelect: open,
+  api.slots.register({
+    id: undefined,
+    slots: {
+      app: () => {
+        useKeyboard((evt) => {
+          if (!evt.defaultPrevented) return
+          if (!api.keybind.match("session_list", evt)) return
+          api.ui.dialog.replace(() => <SmartSessionDialog api={api} />)
+        })
+        return <box />
+      },
     },
-  ])
+  })
 }
 
 const plugin: TuiPluginModule & { id: string } = {

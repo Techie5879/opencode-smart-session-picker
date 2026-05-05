@@ -5,8 +5,32 @@ import type { RankedCandidate, SearchConfig, SearchDocument, SourceSessionCorpus
 import { extractSessionDocuments } from "./extractor"
 import { fileExists } from "./config"
 
+let customSQLiteAttempted = false
+
 function now() {
   return Date.now()
+}
+
+async function candidateSQLiteLibraries(config: SearchConfig) {
+  return [
+    config.sqliteLibPath,
+    "/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib",
+    "/usr/local/opt/sqlite/lib/libsqlite3.dylib",
+  ].filter((file): file is string => Boolean(file))
+}
+
+async function configureSQLiteForExtensions(config: SearchConfig) {
+  if (customSQLiteAttempted || config.disableVector) return
+  customSQLiteAttempted = true
+
+  for (const candidate of await candidateSQLiteLibraries(config)) {
+    if (!(await fileExists(candidate))) continue
+    try {
+      if (Database.setCustomSQLite(candidate)) return
+    } catch {
+      return
+    }
+  }
 }
 
 function ftsQuery(query: string) {
@@ -37,6 +61,7 @@ export class SearchSidecar {
 
   static async open(config: SearchConfig) {
     await mkdir(path.dirname(config.searchDbPath), { recursive: true })
+    await configureSQLiteForExtensions(config)
     const sidecar = new SearchSidecar(config)
     sidecar.migrate()
     return sidecar

@@ -29,6 +29,7 @@ export type SearchConfig = {
   disableVector: boolean
   documentPrefix: string
   queryPrefix: string
+  sqliteLibPath?: string
   sqliteVecExtension?: string
 }
 
