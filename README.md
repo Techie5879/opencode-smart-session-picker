@@ -40,12 +40,13 @@ From this repo:
 bun install
 ```
 
-Add the plugin to `~/.config/opencode/tui.json`:
+Add the plugin to `~/.config/opencode/tui.json`, replacing the example path
+with the absolute path to your clone of this repo:
 
 ```json
 {
   "$schema": "https://opencode.ai/tui.json",
-  "plugin": ["file:///Users/helios/opencode-smart-session-picker"]
+  "plugin": ["file:///absolute/path/to/opencode-smart-session-picker"]
 }
 ```
 
