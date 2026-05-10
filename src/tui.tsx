@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { TextAttributes, type RGBA } from "@opentui/core"
+import { TextAttributes, type RGBA, type ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { For, Show, createEffect, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
@@ -172,6 +172,12 @@ function PreviewPane(props: {
 }) {
   const theme = props.api.theme.current
   const scrollHeight = () => Math.max(6, props.height - 3)
+  let scrollbox: ScrollBoxRenderable | undefined
+
+  createEffect(() => {
+    if (!props.preview) return
+    scrollbox?.scrollTo({ x: 0, y: 0 })
+  })
 
   return (
     <box
@@ -198,7 +204,13 @@ function PreviewPane(props: {
           </box>
         }
       >
-        <scrollbox height={scrollHeight()} scrollbarOptions={{ visible: false }}>
+        <scrollbox
+          ref={(el) => {
+            scrollbox = el
+          }}
+          height={scrollHeight()}
+          scrollbarOptions={{ visible: false }}
+        >
           <For each={props.preview!.lines}>
             {(line) => (
               <Show

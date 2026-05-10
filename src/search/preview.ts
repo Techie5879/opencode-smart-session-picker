@@ -132,8 +132,7 @@ function applyWindow(
 
   if (matchCount > 0) {
     const first = all.findIndex((l) => l.isMatch)
-    const half = Math.floor(contextLines / 2)
-    const start = Math.max(0, first - half)
+    const start = first
     const end = Math.min(all.length, start + contextLines)
     return { sessionID, lines: all.slice(start, end), matchCount, totalLines: all.length }
   }
