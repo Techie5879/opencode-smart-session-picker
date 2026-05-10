@@ -4,6 +4,17 @@ import { resolveSearchConfig } from "./config"
 import { checkFzf } from "./dependencies"
 import { LlamaEmbeddingClient } from "./embedding"
 import { runFzfSearch } from "./fzf"
+import {
+  diagnosticKinds,
+  elapsedMs,
+  errorFields,
+  logEvent,
+  logModeUnavailable,
+  nextLogID,
+  nowMs,
+  queryStats,
+  timePhase,
+} from "./logging"
 import { listOpenCodeSessions, loadCorpusFromOpenCodeApi } from "./opencode-api"
 import { blendHybridScores } from "./ranking"
 import { SearchSidecar } from "./sidecar"
@@ -72,102 +83,227 @@ export async function searchSessions(
   query: string,
   input: { mode?: SearchMode } = {},
 ): Promise<SearchResponse> {
+  const searchID = nextLogID("search")
+  const started = nowMs()
+  const phases: Record<string, number> = {}
   const config: SearchConfig = { ...resolveSearchConfig(), ...input }
   const diagnostics: SearchDiagnostic[] = []
-  const allSessions = await listOpenCodeSessions(api)
 
-  // Empty query: return all sessions regardless of mode or dep availability
-  if (!query.trim()) {
+  logEvent(api, "debug", "search.started", {
+    component: "search",
+    searchID,
+    mode: config.mode,
+    ...queryStats(query),
+  })
+
+  function completed(response: SearchResponse, extra: Record<string, unknown> = {}) {
+    logEvent(api, response.modeUnavailable ? "warn" : "debug", "search.completed", {
+      component: "search",
+      searchID,
+      mode: config.mode,
+      ...queryStats(query),
+      durationMs: elapsedMs(started),
+      phases,
+      resultCount: response.sessions.length,
+      diagnosticKinds: diagnosticKinds(response.diagnostics),
+      modeUnavailable: response.modeUnavailable,
+      ...extra,
+    })
+    return response
+  }
+
+  try {
+    const allSessions = await timePhase(phases, "sessionListMs", () => listOpenCodeSessions(api))
+
     let sidecar: SearchSidecar | undefined
     try {
-      sidecar = await SearchSidecar.open(config)
-      await ensureBackgroundIndex(api, allSessions, sidecar, diagnostics)
-    } catch {
-      /* sidecar not needed for empty-query listing */
+      // Empty query: return all sessions regardless of mode or dependency availability.
+      if (!query.trim()) {
+        try {
+          await timePhase(phases, "indexWarmupMs", async () => {
+            sidecar = await SearchSidecar.open(config)
+            await ensureBackgroundIndex(api, allSessions, sidecar, diagnostics)
+          })
+        } catch {
+          /* sidecar not needed for empty-query listing */
+        } finally {
+          sidecar?.close()
+          sidecar = undefined
+        }
+        return completed({ sessions: allSessions, diagnostics }, { candidateCount: allSessions.length })
+      }
+
+      try {
+        await timePhase(phases, "sidecarOpenIndexMs", async () => {
+          sidecar = await SearchSidecar.open(config)
+          await ensureBackgroundIndex(api, allSessions, sidecar, diagnostics, true)
+        })
+      } catch (err) {
+        logModeUnavailable(
+          api,
+          config.mode,
+          err instanceof Error ? err.message : "Sidecar search database could not be opened.",
+          {
+            searchID,
+            dependency: "sidecar-index",
+          },
+        )
+        diagnostics.push({
+          kind: "sidecar-unavailable",
+          message: err instanceof Error ? err.message : "Sidecar search database could not be opened.",
+        })
+      }
+
+      if (config.mode === "fzf") {
+        const fzf = await timePhase(phases, "fzfCheckMs", () => checkFzf(config))
+        if (fzf.state !== "available" || !fzf.bin) {
+          diagnostics.push({ kind: "fzf-unavailable", message: fzf.message ?? "fzf is unavailable." })
+          const modeUnavailable = "fzf is not installed - install fzf to use this mode."
+          logModeUnavailable(api, "fzf", modeUnavailable, {
+            searchID,
+            dependency: "fzf",
+            dependencyState: fzf.state,
+          })
+          return completed(
+            {
+              sessions: [],
+              diagnostics,
+              modeUnavailable,
+            },
+            { candidateCount: allSessions.length },
+          )
+        }
+        const fzfBin = fzf.bin
+
+        const snippets = await timePhase(
+          phases,
+          "snippetLoadMs",
+          async () => sidecar?.snippetsForSessions(allSessions.map((session) => session.id)) ?? new Map<string, string>(),
+        )
+        const result = await timePhase(phases, "fzfSearchMs", () =>
+          runFzfSearch({
+            bin: fzfBin,
+            query,
+            candidates: allSessions.map((session) => ({ session, snippet: snippets.get(session.id) })),
+          }),
+        )
+        if (result.status === "error") {
+          diagnostics.push({ kind: "fzf-unavailable", message: result.message })
+          logModeUnavailable(api, "fzf", result.message, {
+            searchID,
+            dependency: "fzf",
+          })
+          return completed(
+            {
+              sessions: [],
+              diagnostics,
+              modeUnavailable: `fzf error: ${result.message}`,
+            },
+            { candidateCount: allSessions.length, fzfStatus: result.status },
+          )
+        }
+        if (result.status === "no-match") {
+          return completed(
+            { sessions: [], diagnostics },
+            { candidateCount: allSessions.length, fzfStatus: result.status },
+          )
+        }
+        return completed(
+          { sessions: orderByIDs(allSessions, result.sessionIDs), diagnostics },
+          { candidateCount: allSessions.length, fzfStatus: result.status },
+        )
+      }
+
+      // Hybrid mode
+      if (!sidecar) {
+        const modeUnavailable = "Search index is unavailable - hybrid search requires the sidecar database."
+        return completed(
+          {
+            sessions: [],
+            diagnostics,
+            modeUnavailable,
+          },
+          { candidateCount: allSessions.length },
+        )
+      }
+      const hybridSidecar = sidecar
+
+      const keyword = await timePhase(phases, "keywordSearchMs", async () => hybridSidecar.searchFts(query))
+      if (!keyword.length) {
+        return completed(
+          { sessions: [], diagnostics },
+          { candidateCount: allSessions.length, keywordCandidateCount: 0 },
+        )
+      }
+
+      let vector: RankedCandidate[] = []
+      if (!config.disableVector && config.alpha > 0) {
+        const client = new LlamaEmbeddingClient(config)
+        try {
+          const healthy = await timePhase(phases, "embeddingHealthMs", () => client.health())
+          if (healthy) {
+            const embedding = await timePhase(phases, "embeddingQueryMs", () => client.embedQuery(query))
+            vector = await timePhase(phases, "vectorSearchMs", () => hybridSidecar.searchVector(embedding))
+          } else {
+            diagnostics.push({
+              kind: "embedding-unavailable",
+              message: "Embedding server is unavailable; using keyword search.",
+            })
+            logModeUnavailable(api, "hybrid", "Embedding server is unavailable; using keyword search.", {
+              searchID,
+              dependency: "llama-server",
+            })
+          }
+        } catch (err) {
+          diagnostics.push({
+            kind: "embedding-unavailable",
+            message: err instanceof Error ? err.message : "Embedding query failed; using keyword search.",
+          })
+          logModeUnavailable(
+            api,
+            "hybrid",
+            err instanceof Error ? err.message : "Embedding query failed; using keyword search.",
+            {
+              searchID,
+              dependency: "llama-server",
+            },
+          )
+        }
+      }
+
+      const { ranked, diagnostics: rankingDiagnostics } = await timePhase(phases, "rankingMs", async () =>
+        blendHybridScores({
+          keyword,
+          vector,
+          alpha: config.alpha,
+          vectorAvailable: vector.length > 0,
+        }),
+      )
+      diagnostics.push(...rankingDiagnostics)
+      return completed(
+        { sessions: orderByIDs(allSessions, ranked.map((row) => row.sessionID)), diagnostics },
+        {
+          candidateCount: allSessions.length,
+          keywordCandidateCount: keyword.length,
+          vectorCandidateCount: vector.length,
+          rankedCandidateCount: ranked.length,
+          alpha: config.alpha,
+          vectorEnabled: !config.disableVector,
+        },
+      )
     } finally {
       sidecar?.close()
     }
-    return { sessions: allSessions, diagnostics }
-  }
-
-  let sidecar: SearchSidecar | undefined
-  try {
-    sidecar = await SearchSidecar.open(config)
-    await ensureBackgroundIndex(api, allSessions, sidecar, diagnostics, true)
   } catch (err) {
-    diagnostics.push({
-      kind: "sidecar-unavailable",
-      message: err instanceof Error ? err.message : "Sidecar search database could not be opened.",
+    logEvent(api, "error", "search.failed", {
+      component: "search",
+      searchID,
+      mode: config.mode,
+      ...queryStats(query),
+      durationMs: elapsedMs(started),
+      phases,
+      ...errorFields(err),
     })
+    throw err
   }
-
-  if (config.mode === "fzf") {
-    const fzf = await checkFzf(config)
-    if (fzf.state !== "available" || !fzf.bin) {
-      diagnostics.push({ kind: "fzf-unavailable", message: fzf.message ?? "fzf is unavailable." })
-      sidecar?.close()
-      return {
-        sessions: [],
-        diagnostics,
-        modeUnavailable: "fzf is not installed — install fzf to use this mode.",
-      }
-    }
-
-    const snippets = sidecar?.snippetsForSessions(allSessions.map((session) => session.id)) ?? new Map<string, string>()
-    const result = await runFzfSearch({
-      bin: fzf.bin,
-      query,
-      candidates: allSessions.map((session) => ({ session, snippet: snippets.get(session.id) })),
-    })
-    sidecar?.close()
-    if (result.status === "error") {
-      diagnostics.push({ kind: "fzf-unavailable", message: result.message })
-      return {
-        sessions: [],
-        diagnostics,
-        modeUnavailable: `fzf error: ${result.message}`,
-      }
-    }
-    if (result.status === "no-match") return { sessions: [], diagnostics }
-    return { sessions: orderByIDs(allSessions, result.sessionIDs), diagnostics }
-  }
-
-  // Hybrid mode
-  if (!sidecar) {
-    return {
-      sessions: [],
-      diagnostics,
-      modeUnavailable: "Search index is unavailable — hybrid search requires the sidecar database.",
-    }
-  }
-
-  const keyword = sidecar.searchFts(query)
-  if (!keyword.length) {
-    sidecar.close()
-    return { sessions: [], diagnostics }
-  }
-
-  let vector: RankedCandidate[] = []
-  if (!config.disableVector && config.alpha > 0) {
-    const client = new LlamaEmbeddingClient(config)
-    try {
-      if (await client.health()) vector = await sidecar.searchVector(await client.embedQuery(query))
-      else diagnostics.push({ kind: "embedding-unavailable", message: "Embedding server is unavailable; using keyword search." })
-    } catch (err) {
-      diagnostics.push({
-        kind: "embedding-unavailable",
-        message: err instanceof Error ? err.message : "Embedding query failed; using keyword search.",
-      })
-    }
-  }
-
-  const { ranked, diagnostics: rankingDiagnostics } = blendHybridScores({
-    keyword,
-    vector,
-    alpha: config.alpha,
-    vectorAvailable: vector.length > 0,
-  })
-  diagnostics.push(...rankingDiagnostics)
-  sidecar.close()
-  return { sessions: orderByIDs(allSessions, ranked.map((row) => row.sessionID)), diagnostics }
 }

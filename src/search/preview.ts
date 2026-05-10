@@ -1,5 +1,6 @@
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import { resolveSearchConfig } from "./config"
+import { elapsedMs, errorFields, logEvent, nextLogID, nowMs, queryStats, timePhase } from "./logging"
 import { SearchSidecar } from "./sidecar"
 
 /** Number of lines of context shown in the preview pane. */
@@ -71,26 +72,73 @@ export async function loadSessionPreview(
   query: string,
   contextLines: number = PREVIEW_CONTEXT_LINES,
 ): Promise<SessionPreview | undefined> {
+  const previewID = nextLogID("preview")
+  const started = nowMs()
+  const phases: Record<string, number> = {}
   const config = resolveSearchConfig()
   let rawLines: PreviewLine[] | undefined
+  let source: "sidecar" | "api" | "none" = "none"
+
+  logEvent(api, "debug", "preview.started", {
+    component: "preview",
+    previewID,
+    ...queryStats(query),
+    contextLines,
+  })
 
   let sidecar: SearchSidecar | undefined
   try {
-    sidecar = await SearchSidecar.open(config)
-    if (sidecar.hasDocuments()) {
-      const rows = sidecar.getSessionDocumentTexts(sessionID)
-      if (rows.length) rawLines = rowsToLines(rows)
-    }
-  } catch {
+    await timePhase(phases, "sidecarPreviewMs", async () => {
+      sidecar = await SearchSidecar.open(config)
+      if (sidecar.hasDocuments()) {
+        const rows = sidecar.getSessionDocumentTexts(sessionID)
+        if (rows.length) {
+          rawLines = rowsToLines(rows)
+          source = "sidecar"
+        }
+      }
+    })
+  } catch (err) {
+    logEvent(api, "debug", "preview.sidecar_unavailable", {
+      component: "preview",
+      previewID,
+      ...errorFields(err),
+    })
     /* sidecar unavailable */
   } finally {
     sidecar?.close()
   }
 
-  if (!rawLines) rawLines = await linesFromApi(api, sessionID)
-  if (!rawLines?.length) return undefined
+  if (!rawLines) {
+    rawLines = await timePhase(phases, "apiPreviewMs", () => linesFromApi(api, sessionID))
+    if (rawLines?.length) source = "api"
+  }
+  if (!rawLines?.length) {
+    logEvent(api, "warn", "preview.failed", {
+      component: "preview",
+      previewID,
+      ...queryStats(query),
+      durationMs: elapsedMs(started),
+      phases,
+      source,
+      reason: "No preview lines were available.",
+    })
+    return undefined
+  }
 
-  return applyWindow(sessionID, rawLines, query, contextLines)
+  const result = applyWindow(sessionID, rawLines, query, contextLines)
+  logEvent(api, "debug", "preview.loaded", {
+    component: "preview",
+    previewID,
+    ...queryStats(query),
+    durationMs: elapsedMs(started),
+    phases,
+    source,
+    totalLines: result.totalLines,
+    visibleLines: result.lines.length,
+    matchCount: result.matchCount,
+  })
+  return result
 }
 
 function rowsToLines(rows: Array<{ role: string | null; text: string }>): PreviewLine[] {

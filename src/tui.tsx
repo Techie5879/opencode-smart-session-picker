@@ -4,6 +4,7 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { For, Show, createEffect, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import { resolveSearchConfig } from "./search/config"
+import { dependencySnapshot, elapsedMs, errorFields, logEvent, nextLogID, nowMs, queryStats } from "./search/logging"
 import { PREVIEW_CONTEXT_LINES, loadSessionPreview, type SessionPreview } from "./search/preview"
 import { searchSessions } from "./search/search"
 import { checkSearchEnvironment } from "./search/status"
@@ -260,6 +261,8 @@ function PreviewPane(props: {
 
 function SmartSessionDialog(props: { api: TuiPluginApi }) {
   const dims = useTerminalDimensions()
+  const dialogID = nextLogID("dialog")
+  const openedAt = nowMs()
   const [mode, setMode] = createSignal<SearchMode>(resolveSearchConfig().mode)
   const [query, setQuery] = createSignal("")
   const [sessions, setSessions] = createSignal<{ id: string; title: string; updated: number }[]>([])
@@ -278,10 +281,21 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
 
   async function refresh(nextQuery: string, nextMode: SearchMode) {
     const id = ++request
+    const uiSearchID = nextLogID("ui-search")
     setSearchLoading(true)
     try {
       const result = await searchSessions(props.api, nextQuery, { mode: nextMode })
-      if (id !== request) return
+      if (id !== request) {
+        logEvent(props.api, "debug", "search.cancelled", {
+          component: "dialog",
+          dialogID,
+          uiSearchID,
+          mode: nextMode,
+          ...queryStats(nextQuery),
+          reason: "superseded",
+        })
+        return
+      }
       setModeError(result.modeUnavailable)
       const nextSessions = result.sessions.map((s) => ({
         id: s.id,
@@ -300,10 +314,18 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
         setPreview(undefined)
         setPreviewLoading(false)
       }
-    } catch {
+    } catch (err) {
       if (id !== request) return
       setModeError(undefined)
       setSessions([])
+      logEvent(props.api, "error", "search.ui_failed", {
+        component: "dialog",
+        dialogID,
+        uiSearchID,
+        mode: nextMode,
+        ...queryStats(nextQuery),
+        ...errorFields(err),
+      })
     } finally {
       if (id === request) setSearchLoading(false)
     }
@@ -315,7 +337,31 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
       const result = await checkSearchEnvironment({ mode: nextMode })
       if (id !== statusRequest) return
       setEnvironment(result)
-    } catch {
+      logEvent(props.api, "debug", "environment.checked", {
+        component: "dialog",
+        dialogID,
+        mode: nextMode,
+        alpha: result.alpha,
+        dependencies: dependencySnapshot(result),
+        modeStates: Object.fromEntries(result.modes.map((item) => [item.mode, item.state])),
+      })
+      const active = result.modes.find((item) => item.mode === nextMode)
+      if (active && active.state !== "available") {
+        logEvent(props.api, "warn", "dependency.unavailable", {
+          component: "dialog",
+          dialogID,
+          mode: nextMode,
+          reason: active.message,
+          dependencies: dependencySnapshot(result),
+        })
+      }
+    } catch (err) {
+      logEvent(props.api, "error", "environment.failed", {
+        component: "dialog",
+        dialogID,
+        mode: nextMode,
+        ...errorFields(err),
+      })
       /* swallow – status bar just stays hidden */
     }
   }
@@ -362,6 +408,11 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
 
   onMount(() => {
     props.api.ui.dialog.setSize("xlarge")
+    logEvent(props.api, "info", "picker.opened", {
+      component: "dialog",
+      dialogID,
+      mode: mode(),
+    })
   })
 
   onCleanup(() => {
@@ -370,6 +421,12 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
     request++
     statusRequest++
     previewRequest++
+    logEvent(props.api, "info", "picker.closed", {
+      component: "dialog",
+      dialogID,
+      mode: mode(),
+      durationMs: elapsedMs(openedAt),
+    })
   })
 
   function toggleMode() {
@@ -378,11 +435,26 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
     const modeStatus = env?.modes.find((m) => m.mode === next)
     if (modeStatus && modeStatus.state !== "available") {
       props.api.ui.toast({ variant: "warning", message: modeStatus.message ?? `${next} mode is unavailable.` })
+      logEvent(props.api, "warn", "mode.change_rejected", {
+        component: "dialog",
+        dialogID,
+        fromMode: mode(),
+        toMode: next,
+        reason: modeStatus.message,
+        modeState: modeStatus.state,
+      })
       return
     }
+    const previous = mode()
     request++
     setModeError(undefined)
     setMode(next)
+    logEvent(props.api, "info", "mode.changed", {
+      component: "dialog",
+      dialogID,
+      fromMode: previous,
+      toMode: next,
+    })
   }
 
   function updateQuery(next: string) {
@@ -425,6 +497,15 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
               loadPreview(opt.value)
             }}
             onSelect={(opt: { value: string }) => {
+              const rank = sessions().findIndex((session) => session.id === opt.value)
+              logEvent(props.api, "info", "session.selected", {
+                component: "dialog",
+                dialogID,
+                mode: mode(),
+                resultRank: rank >= 0 ? rank + 1 : undefined,
+                resultCount: sessions().length,
+                ...queryStats(query()),
+              })
               props.api.route.navigate("session", { sessionID: opt.value })
               props.api.ui.dialog.clear()
             }}
