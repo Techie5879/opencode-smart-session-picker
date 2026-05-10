@@ -19,7 +19,7 @@ export function parseAlpha(value: string | undefined) {
 }
 
 function parseMode(value: string | undefined): SearchMode {
-  return value === "fzf" ? "fzf" : "hybrid"
+  return value === "hybrid" ? "hybrid" : "fzf"
 }
 
 function xdgDataHome(env: NodeJS.ProcessEnv = process.env) {

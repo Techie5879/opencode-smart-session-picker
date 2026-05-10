@@ -54,9 +54,10 @@ Restart `opencode`, then press `Ctrl-X` followed by `L`.
 
 ## Search Modes
 
-The default mode is `hybrid`, which uses the local SQLite keyword index. If the
-sidecar index or other required dependencies are unavailable, the picker shows
-a clear status message instead of silently falling back to a different search.
+The default mode is `fzf`, which ranks sessions with an installed `fzf`
+executable. If `fzf` or other required dependencies are unavailable, the picker
+shows a clear status message instead of silently falling back to a different
+search.
 
 Inside the smart session dialog, a status bar groups dependency chips by mode
 (`hybrid` and `fzf`). The active mode is marked with `▸`; press `Tab` to
@@ -66,18 +67,18 @@ or disabled.
 To use another mode for a run:
 
 ```bash
-OPENCODE_SMART_PICKER_SEARCH_MODE=fzf opencode /path/to/workspace
+OPENCODE_SMART_PICKER_SEARCH_MODE=hybrid opencode /path/to/workspace
 ```
 
 Available modes:
 
-- `hybrid`: default local search mode.
-- `fzf`: ranks sessions with an installed `fzf` executable.
+- `fzf`: default fuzzy search mode with an installed `fzf` executable.
+- `hybrid`: local SQLite keyword search mode.
 
 Useful environment variables:
 
 ```bash
-OPENCODE_SMART_PICKER_SEARCH_MODE=hybrid # or fzf
+OPENCODE_SMART_PICKER_SEARCH_MODE=fzf # or hybrid
 OPENCODE_SMART_PICKER_HYBRID_ALPHA=0.5
 OPENCODE_SMART_PICKER_SEARCH_DB=/path/to/opencode-search.db
 OPENCODE_SMART_PICKER_SOURCE_DB=/path/to/opencode.db
