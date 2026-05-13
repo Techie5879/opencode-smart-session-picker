@@ -11,7 +11,7 @@ Use the current SQLite tables:
 - `message`
 - `part`
 
-Avoid designing around older JSON session files. They are migration
+Avoid designing around JSON session files. They are migration
 compatibility detail, not the target runtime store for this work.
 
 The most direct local extractor can read the OpenCode database with SQLite. A
@@ -166,4 +166,3 @@ official API:
 The semantic index should only decide which sessions to show and in what order.
 That keeps the plugin small and avoids patching OpenCode core while the search
 model is still evolving.
-

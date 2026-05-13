@@ -21,6 +21,12 @@ OpenCode's repo recommends `bun dev <directory>` as the local equivalent of the 
 3. Run `bun run dev:opencode -- <workspace>` from this repo. Omit `<workspace>` to open OpenCode against this repo.
 4. In the TUI, press `Ctrl-X` then `L`. The smart session picker should replace the built-in session list.
 
+For manual smoke tests that need a workspace with many chats, pick a busy local workspace and pass it to the dev launcher:
+
+```bash
+bun run dev:opencode -- <busy-workspace>
+```
+
 The dev launcher writes only under `.opencode-dev/` in this repo and sets these environment variables for the child OpenCode process:
 
 - `OPENCODE_TUI_CONFIG=.opencode-dev/tui.json`, containing a file plugin entry for `src/tui.tsx`.
@@ -44,12 +50,12 @@ Because the dev run isolates XDG data/state too, it will not show the user's rea
 - Keep the first implementation centered on the TUI plugin API. Avoid patching OpenCode core until plugin shadowing is proven insufficient.
 - The only OpenCode behavior this plugin should override by default is the built-in session picker command path: search sessions and render the related picker dialog. Do not override, shadow, replace, rebind, wrap, or reimplement any other native OpenCode command, route, keybind, dialog, mutation flow, config behavior, storage behavior, theme behavior, model/provider behavior, prompt behavior, workspace behavior, or global TUI functionality unless the user explicitly asks for that exact change.
 - Prefer native OpenCode APIs for everything outside the session picker replacement. If OpenCode already provides filtering, root-session selection, sorting, routing, mutation, or display data needed by the picker, call the native API instead of recreating it locally.
-- Do not add extra command-palette entries or alternate plugin commands for this feature unless the user explicitly asks. The command registration should remain limited to shadowing `session.list` with `session_list`.
-- Keep research notes in `docs/`. Session-storage research should focus on the current SQLite-backed `session`, `message`, and `part` tables, not the older JSON session files.
+- Do not add extra command-palette entries or alternate plugin commands for this feature unless the user explicitly asks. The command registration should remain limited to shadowing the `session.list` command through `api.keymap.registerLayer`.
+- Keep research notes in `docs/`. Session-storage research should focus on the current SQLite-backed `session`, `message`, and `part` tables.
 
 ## Implementation Notes
 
-- The plugin shadows the built-in session picker by registering `value: "session.list"` and `keybind: "session_list"`.
+- The plugin shadows the built-in session picker by registering command `session.list` through `api.keymap.registerLayer`.
 - Use public OpenCode TUI plugin APIs only. `api.ui.DialogSelect` is acceptable for simple picker rows; use `api.ui.dialog.replace` with OpenTUI primitives when the plugin needs distinct status/control surfaces.
 - Search implementation lives under `src/search/`. Keep `src/tui.tsx` as a thin OpenTUI dialog wrapper around `searchSessions`, the mode selector, dependency status chips, and the session result list.
 - The only OpenCode override is the built-in session picker command path and its related dialog. Do not add extra command palette entries, routes, keybind overrides, storage mutations, or config reads unless a task explicitly asks for them.

@@ -9,8 +9,8 @@ session picker implementation.
 - Public OpenCode domain types come from `@opencode-ai/sdk/v2`.
 - The plugin should import `Session`, `Message`, and `Part` from the SDK instead
   of defining local OpenCode-shaped types.
-- The only OpenCode command path this plugin shadows is `session.list` with the
-  `session_list` keybind.
+- The only OpenCode command path this plugin shadows is `session.list`, registered
+  through `api.keymap.registerLayer`.
 - Public plugin dialogs expose `DialogSelect`, `DialogPrompt`, `DialogConfirm`,
   and `DialogAlert`. Internal picker affordances such as gutters and background
   colors are not public plugin API.

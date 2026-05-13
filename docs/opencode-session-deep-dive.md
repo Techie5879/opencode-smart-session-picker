@@ -1,7 +1,7 @@
 # OpenCode Session Storage Deep Dive
 
 This document focuses on the current SQLite-backed OpenCode session path in
-`upstream/opencode`. It intentionally avoids the old JSON session store except
+`upstream/opencode`. It intentionally avoids the JSON session store except
 where SQLite migration compatibility affects current behavior.
 
 ## Executive Summary
@@ -348,4 +348,3 @@ Useful ranking features:
 The current OpenCode list API can remain the source for selection, rename, and
 delete. The semantic index should own query expansion, embedding search, and
 hybrid ranking.
-

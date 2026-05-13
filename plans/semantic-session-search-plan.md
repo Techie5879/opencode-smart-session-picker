@@ -10,7 +10,8 @@ Current implementation status:
 
 - [x] Upstream reconnaissance is documented in
   `docs/upstream-search-implementation-notes.md`.
-- [x] The TUI override remains limited to `session.list` / `session_list`.
+- [x] The TUI override remains limited to command `session.list` through
+  `api.keymap.registerLayer`.
 - [x] Search code lives in `src/search/` as sidecar/plugin-owned behavior.
 - [x] OpenCode-owned TUI/session/message/part types are imported from public
   OpenCode packages.
@@ -176,13 +177,13 @@ llama-server \
 ## Existing Install And Upgrade Behavior
 
 - Read `index_meta` before using the sidecar.
-- If the sidecar schema version is older, run deterministic migrations when
+- If the sidecar schema version needs migration, run deterministic migrations when
   possible. If migration is not possible, rebuild the derived sidecar from
   OpenCode source data.
 - If OpenCode source fingerprint changes, reconcile rather than trusting stale
   rows.
 - If embedding profile changes, keep FTS rows when valid and rebuild only vector
-  rows that depend on the old profile.
+  rows that depend on the superseded profile.
 - If extractor version changes, rebuild affected documents and vectors because
   source hashes are no longer comparable.
 - If the plugin was already installed but no sidecar exists, treat it as a fresh
@@ -235,9 +236,9 @@ llama-server \
   - [x] If it describes OpenCode-owned data, import the OpenCode type instead.
   - [x] If it describes plugin-owned derived data, keep it minimal and include
     only fields the feature actually uses.
-- [x] Keep command registration unchanged:
-  - [x] `value: "session.list"`.
-  - [x] `keybind: "session_list"`.
+- [x] Keep command registration limited to:
+  - [x] `api.keymap.registerLayer`.
+  - [x] command name `session.list`.
 - [x] Keep navigation and mutation through OpenCode API:
   - [x] `api.route.navigate("session", { sessionID })`.
   - [ ] rename through `api.client.session.update`.
@@ -393,7 +394,7 @@ llama-server \
   - [x] role.
   - [x] path/directory.
   - [x] part text.
-- [ ] If chunking is needed, make it part of `extractor_version` so old rows are
+- [ ] If chunking is needed, make it part of `extractor_version` so stale rows are
   invalidated deterministically.
 
 ## Phase 7: Embedding Client
@@ -557,7 +558,7 @@ llama-server \
   - [ ] no embedding server.
 - [ ] Add existing-install tests:
   - [ ] current schema.
-  - [ ] older schema migration.
+  - [ ] schema migration.
   - [ ] extractor version change.
   - [ ] embedding dimension/profile change.
   - [ ] fzf missing after previously being available.
