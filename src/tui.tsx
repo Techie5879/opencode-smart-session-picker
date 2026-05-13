@@ -529,18 +529,19 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
 }
 
 const tui: TuiPlugin = async (api) => {
-  api.slots.register({
-    id: undefined,
-    slots: {
-      app: () => {
-        useKeyboard((evt) => {
-          if (!evt.defaultPrevented) return
-          if (!api.keybind.match("session_list", evt)) return
-          api.ui.dialog.replace(() => <SmartSessionDialog api={api} />)
-        })
-        return <box />
+  function openSmartSessionDialog() {
+    api.ui.dialog.replace(() => <SmartSessionDialog api={api} />)
+  }
+
+  api.keymap.registerLayer({
+    commands: [
+      {
+        name: "session.list",
+        title: "Switch session",
+        category: "Session",
+        run: openSmartSessionDialog,
       },
-    },
+    ],
   })
 }
 
