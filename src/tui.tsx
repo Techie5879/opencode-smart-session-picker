@@ -6,7 +6,7 @@ import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plug
 import { resolveSearchConfig } from "./search/config"
 import { dependencySnapshot, elapsedMs, errorFields, logEvent, nextLogID, nowMs, queryStats } from "./search/logging"
 import { PREVIEW_CONTEXT_LINES, loadSessionPreview, type SessionPreview } from "./search/preview"
-import { searchSessions } from "./search/search"
+import { registerSearchIndexInvalidation, searchSessions } from "./search/search"
 import { checkSearchEnvironment } from "./search/status"
 import type { DependencyState, SearchDependencyStatus, SearchEnvironmentStatus, SearchMode } from "./search/types"
 
@@ -529,6 +529,8 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
 }
 
 const tui: TuiPlugin = async (api) => {
+  registerSearchIndexInvalidation(api)
+
   function openSmartSessionDialog() {
     api.ui.dialog.replace(() => <SmartSessionDialog api={api} />)
   }
@@ -536,9 +538,13 @@ const tui: TuiPlugin = async (api) => {
   api.keymap.registerLayer({
     commands: [
       {
+        namespace: "palette",
         name: "session.list",
         title: "Switch session",
         category: "Session",
+        suggested: () => api.state.session.count() > 0,
+        slashName: "sessions",
+        slashAliases: ["resume", "continue"],
         run: openSmartSessionDialog,
       },
     ],

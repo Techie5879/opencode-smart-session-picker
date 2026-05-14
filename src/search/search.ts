@@ -24,6 +24,52 @@ import { extractSessionDocuments } from "./extractor"
 let indexing: Promise<void> | undefined
 let indexedOnce = false
 let indexedDbPath: string | undefined
+let indexGeneration = 0
+
+export function invalidateSearchIndex(reason = "manual") {
+  indexedOnce = false
+  indexGeneration += 1
+  return { reason, generation: indexGeneration }
+}
+
+export function searchIndexDebugState() {
+  return {
+    indexedOnce,
+    indexedDbPath,
+    indexing: Boolean(indexing),
+    generation: indexGeneration,
+  }
+}
+
+const INDEX_INVALIDATION_EVENTS = [
+  "session.updated",
+  "session.deleted",
+  "message.updated",
+  "message.removed",
+  "message.part.updated",
+  "message.part.removed",
+  "session.compacted",
+] as const
+
+export function registerSearchIndexInvalidation(api: TuiPluginApi) {
+  const disposers = INDEX_INVALIDATION_EVENTS.map((type) =>
+    api.event.on(type, (event) => {
+      const invalidation = invalidateSearchIndex(type)
+      logEvent(api, "debug", "search.index_invalidated", {
+        component: "search",
+        reason: type,
+        generation: invalidation.generation,
+        eventType: event.type,
+      })
+    }),
+  )
+
+  const dispose = () => {
+    for (const item of disposers.splice(0)) item()
+  }
+  api.lifecycle.onDispose(dispose)
+  return dispose
+}
 
 function orderByIDs(sessions: Session[], ids: string[]) {
   const byID = new Map(sessions.map((session) => [session.id, session]))
@@ -37,6 +83,7 @@ async function ensureBackgroundIndex(
   diagnostics: SearchDiagnostic[],
   blocking = false,
 ) {
+  if (api.lifecycle.signal.aborted) return
   if (indexedDbPath !== sidecar.config.searchDbPath) {
     indexedDbPath = sidecar.config.searchDbPath
     indexedOnce = false
@@ -52,16 +99,21 @@ async function ensureBackgroundIndex(
   }
 
   diagnostics.push({ kind: "indexing", message: "Building the local search index in the background." })
-  indexing = loadCorpusFromOpenCodeApi(api, sessions)
+  const generation = indexGeneration
+  const indexTask = loadCorpusFromOpenCodeApi(api, sessions)
     .then(async (corpus) => {
+      if (api.lifecycle.signal.aborted || generation !== indexGeneration) return
       const workerSidecar = await SearchSidecar.open(sidecar.config)
       try {
+        if (api.lifecycle.signal.aborted || generation !== indexGeneration) return
         workerSidecar.rebuildCorpus(corpus)
         if (!workerSidecar.config.disableVector) {
           const documents = corpus.flatMap((entry) => extractSessionDocuments(entry.session, entry.messages))
           const client = new LlamaEmbeddingClient(workerSidecar.config)
           if (await client.health()) {
+            if (api.lifecycle.signal.aborted || generation !== indexGeneration) return
             const embeddings = await client.embedDocuments(documents.map((document) => document.text))
+            if (api.lifecycle.signal.aborted || generation !== indexGeneration) return
             await workerSidecar.replaceVectorEmbeddings(documents, embeddings)
           }
         }
@@ -70,11 +122,12 @@ async function ensureBackgroundIndex(
       }
     })
     .then(() => {
-      indexedOnce = true
+      if (!api.lifecycle.signal.aborted && generation === indexGeneration) indexedOnce = true
     })
     .finally(() => {
-      indexing = undefined
+      if (indexing === indexTask) indexing = undefined
     })
+  indexing = indexTask
   if (blocking) await indexing
 }
 

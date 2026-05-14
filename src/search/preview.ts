@@ -1,4 +1,5 @@
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
+import type { Message, Part } from "@opencode-ai/sdk/v2"
 import { resolveSearchConfig } from "./config"
 import { elapsedMs, errorFields, logEvent, nextLogID, nowMs, queryStats, timePhase } from "./logging"
 import { SearchSidecar } from "./sidecar"
@@ -77,7 +78,7 @@ export async function loadSessionPreview(
   const phases: Record<string, number> = {}
   const config = resolveSearchConfig()
   let rawLines: PreviewLine[] | undefined
-  let source: "sidecar" | "api" | "none" = "none"
+  let source: "sidecar" | "state" | "api" | "none" = "none"
 
   logEvent(api, "debug", "preview.started", {
     component: "preview",
@@ -107,6 +108,11 @@ export async function loadSessionPreview(
     /* sidecar unavailable */
   } finally {
     sidecar?.close()
+  }
+
+  if (!rawLines) {
+    rawLines = await timePhase(phases, "statePreviewMs", async () => linesFromSyncedState(api, sessionID))
+    if (rawLines?.length) source = "state"
   }
 
   if (!rawLines) {
@@ -156,6 +162,33 @@ function rowsToLines(rows: Array<{ role: string | null; text: string }>): Previe
   return out
 }
 
+function linesFromMessages(messages: Message[], partsForMessage: (messageID: string) => readonly Part[]): PreviewLine[] {
+  const out: PreviewLine[] = []
+  const sorted = [...messages].sort((a, b) => a.time.created - b.time.created)
+  for (const msg of sorted) {
+    out.push({ text: `[${msg.role}]`, kind: "role", isMatch: false })
+    for (const part of partsForMessage(msg.id)) {
+      if (part.type === "text" && !part.ignored) {
+        for (const l of sanitizePreviewTextLines(part.text)) out.push({ text: l, kind: "text", isMatch: false })
+      }
+    }
+    out.push({ text: "", kind: "separator", isMatch: false })
+  }
+  return out.length > 1 ? out : []
+}
+
+export async function linesFromSyncedState(api: TuiPluginApi, sessionID: string): Promise<PreviewLine[] | undefined> {
+  try {
+    if (!api.state.ready) return undefined
+    const messages = api.state.session.messages(sessionID)
+    if (!messages.length) return undefined
+    const lines = linesFromMessages([...messages], (messageID) => api.state.part(messageID))
+    return lines.length ? lines : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function applyWindow(
   sessionID: string,
   all: PreviewLine[],
@@ -192,16 +225,10 @@ async function linesFromApi(api: TuiPluginApi, sessionID: string): Promise<Previ
   try {
     const res = await api.client.session.messages({ sessionID })
     if (res.error || !res.data) return undefined
-    const out: PreviewLine[] = []
-    for (const msg of res.data) {
-      out.push({ text: `[${msg.info.role}]`, kind: "role", isMatch: false })
-      for (const part of msg.parts) {
-        if (part.type === "text" && !part.ignored)
-          for (const l of sanitizePreviewTextLines(part.text)) out.push({ text: l, kind: "text", isMatch: false })
-      }
-      out.push({ text: "", kind: "separator", isMatch: false })
-    }
-    return out.length > 1 ? out : undefined
+    const messages = res.data.map((entry) => entry.info)
+    const partsByMessage = new Map(res.data.map((entry) => [entry.info.id, entry.parts]))
+    const lines = linesFromMessages(messages, (messageID) => partsByMessage.get(messageID) ?? [])
+    return lines.length ? lines : undefined
   } catch {
     return undefined
   }
