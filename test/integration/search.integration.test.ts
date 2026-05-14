@@ -3,12 +3,14 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { Database } from "bun:sqlite"
 import { afterEach, describe, expect, test } from "bun:test"
+import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { SearchConfig } from "../../src/search/types"
 import { resolveSourceDbPath } from "../../src/search/config"
 import { checkFzf } from "../../src/search/dependencies"
 import { LlamaEmbeddingClient } from "../../src/search/embedding"
 import { runFzfSearch } from "../../src/search/fzf"
 import { blendHybridScores } from "../../src/search/ranking"
+import { registerSearchIndexInvalidation, searchIndexDebugState } from "../../src/search/search"
 import { SearchSidecar } from "../../src/search/sidecar"
 import { readSourceCorpusFromDb } from "../../src/search/source-db"
 import { checkSearchEnvironment } from "../../src/search/status"
@@ -120,6 +122,51 @@ function createSourceDb(file: string) {
 }
 
 describe("search integration", () => {
+  test("invalidates the search index from upstream TUI session/message events", () => {
+    const handlers = new Map<string, Array<(event: { type: string }) => void>>()
+    let lifecycleDisposer: (() => void) | undefined
+    const api = {
+      event: {
+        on(type: string, handler: (event: { type: string }) => void) {
+          handlers.set(type, [...(handlers.get(type) ?? []), handler])
+          return () => {
+            handlers.set(
+              type,
+              (handlers.get(type) ?? []).filter((item) => item !== handler),
+            )
+          }
+        },
+      },
+      lifecycle: {
+        onDispose(fn: () => void) {
+          lifecycleDisposer = fn
+          return () => {
+            if (lifecycleDisposer === fn) lifecycleDisposer = undefined
+          }
+        },
+      },
+      client: {
+        app: {
+          log: async () => ({}),
+        },
+      },
+    } as unknown as TuiPluginApi
+
+    const before = searchIndexDebugState().generation
+    const dispose = registerSearchIndexInvalidation(api)
+    handlers.get("message.updated")?.[0]?.({ type: "message.updated" })
+    handlers.get("message.part.removed")?.[0]?.({ type: "message.part.removed" })
+
+    expect(searchIndexDebugState().generation).toBe(before + 2)
+
+    dispose()
+    handlers.get("session.deleted")?.[0]?.({ type: "session.deleted" })
+    expect(searchIndexDebugState().generation).toBe(before + 2)
+
+    lifecycleDisposer?.()
+    expect([...handlers.values()].every((list) => list.length === 0)).toBe(true)
+  })
+
   test("resolves OpenCode channel database paths from a real XDG data directory", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "opencode-smart-picker-xdg-"))
     const dataHome = path.join(root, "data")
