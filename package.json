@@ -13,10 +13,11 @@
     "test": "bun run typecheck && bun test test/integration"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.14.48",
-    "@opencode-ai/sdk": "^1.14.48",
-    "@opentui/core": "^0.2.8",
-    "@opentui/solid": "^0.2.8",
+    "@opencode-ai/plugin": "^1.14.50",
+    "@opencode-ai/sdk": "^1.14.50",
+    "@opentui/core": "^0.2.9",
+    "@opentui/keymap": "^0.2.9",
+    "@opentui/solid": "^0.2.9",
     "solid-js": "^1.9.12",
     "sqlite-vec": "^0.1.9"
   },
