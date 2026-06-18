@@ -13,6 +13,9 @@ import type { DependencyState, SearchDependencyStatus, SearchEnvironmentStatus, 
 
 const PLUGIN_ID = "local.smart-session-picker"
 const SEARCH_DEBOUNCE_MS = 150
+const DIALOG_PADDING_X = 2
+const DIALOG_PADDING_Y = 1
+const DIALOG_PANE_GAP = 2
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 type SessionStatus = ReturnType<TuiPluginApi["state"]["session"]["status"]>
@@ -204,7 +207,7 @@ function PreviewPane(props: {
 }) {
   const theme = props.api.theme.current
   const panel = opaque(theme.backgroundPanel)
-  const scrollHeight = () => Math.max(6, props.height - 3)
+  const scrollHeight = () => Math.max(6, props.height - 5)
   let scrollbox: ScrollBoxRenderable | undefined
 
   createEffect(() => {
@@ -227,6 +230,8 @@ function PreviewPane(props: {
       titleAlignment="left"
       paddingLeft={1}
       paddingRight={1}
+      paddingTop={1}
+      paddingBottom={1}
     >
       <Show
         when={props.preview}
@@ -532,8 +537,22 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
   const panel = () => opaque(props.api.theme.current.backgroundPanel)
 
   return (
-    <box flexDirection="column" backgroundColor={panel()}>
-      <box flexDirection="row" height={pickerHeight()} flexShrink={0} backgroundColor={panel()}>
+    <box
+      flexDirection="column"
+      backgroundColor={panel()}
+      gap={1}
+      paddingLeft={DIALOG_PADDING_X}
+      paddingRight={DIALOG_PADDING_X}
+      paddingTop={DIALOG_PADDING_Y}
+      paddingBottom={DIALOG_PADDING_Y}
+    >
+      <box
+        flexDirection="row"
+        height={pickerHeight()}
+        flexShrink={0}
+        gap={DIALOG_PANE_GAP}
+        backgroundColor={panel()}
+      >
         <box flexGrow={3} flexBasis={0} height={pickerHeight()} flexShrink={0} backgroundColor={panel()}>
           <DialogSelect
             title={`Sessions · ${mode()}`}
