@@ -121,27 +121,40 @@ function createSourceDb(file: string) {
     4,
     JSON.stringify({ type: "text", text: "Later attachment mention: resume.pdf should stay searchable" }),
   )
-  insertMessage.run(
-    "msg_one_assistant",
+  insertPart.run(
+    "prt_one_image",
+    "msg_one",
     "ses_one",
     5,
     5,
+    JSON.stringify({
+      type: "file",
+      filename: "clipboard",
+      mime: "image/png",
+      url: "data:image/png;base64,base64payloadtoken",
+    }),
+  )
+  insertMessage.run(
+    "msg_one_assistant",
+    "ses_one",
+    6,
+    6,
     JSON.stringify({ role: "assistant", agent: "build", model: { providerID: "local", modelID: "test" } }),
   )
   insertPart.run(
     "prt_one_assistant_text",
     "msg_one_assistant",
     "ses_one",
-    6,
-    6,
+    7,
+    7,
     JSON.stringify({ type: "text", text: "assistant-only-token should not be searchable" }),
   )
   insertPart.run(
     "prt_one_assistant_tool",
     "msg_one_assistant",
     "ses_one",
-    7,
-    7,
+    8,
+    8,
     JSON.stringify({
       type: "tool",
       tool: "bash",
@@ -242,6 +255,8 @@ describe("search integration", () => {
     const toolResults = sidecar.searchFts("tool-only-token")
     const titleResults = sidecar.searchFts("Boring")
     const pathResults = sidecar.searchFts("packages")
+    const dataUrlResults = sidecar.searchFts("base64payloadtoken")
+    const fileNameResults = sidecar.searchFts("clipboard")
     const snippets = sidecar.snippetsForSessions(["ses_one"])
     const needsCurrentReindex = sidecar.needsReindex(corpus.map((entry) => entry.session))
     const needsMissingReindex = sidecar.needsReindex([
@@ -263,8 +278,12 @@ describe("search integration", () => {
     expect(toolResults).toEqual([])
     expect(titleResults[0]?.sessionID).toBe("ses_one")
     expect(pathResults).toEqual([])
+    expect(dataUrlResults).toEqual([])
+    expect(fileNameResults[0]?.sessionID).toBe("ses_one")
     expect(snippets.get("ses_one")).toContain("Boring title")
     expect(snippets.get("ses_one")).toContain("resume.pdf")
+    expect(snippets.get("ses_one")).toContain("clipboard")
+    expect(snippets.get("ses_one")).not.toContain("base64payloadtoken")
     expect(snippets.get("ses_one")).not.toContain("assistant-only-token")
     expect(snippets.get("ses_one")).not.toContain("tool-only-token")
     expect(needsCurrentReindex).toBe(false)

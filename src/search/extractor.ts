@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2"
 import type { SearchDocument } from "./types"
 
-export const SEARCH_EXTRACTOR_VERSION = "3"
+export const SEARCH_EXTRACTOR_VERSION = "4"
 
 function hash(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
@@ -27,7 +27,7 @@ function sourceText(part: Part) {
     case "file":
       return joinText([
         part.filename,
-        part.url,
+        searchableFileUrl(part.url),
         part.mime,
         part.source?.type === "file" || part.source?.type === "symbol" ? part.source.path : undefined,
         part.source?.type === "symbol" ? part.source.name : undefined,
@@ -42,6 +42,12 @@ function sourceText(part: Part) {
     default:
       return
   }
+}
+
+function searchableFileUrl(url: string | undefined) {
+  if (!url) return
+  if (/^data:/i.test(url)) return
+  return url
 }
 
 export function extractSearchDocuments(session: Session, message: Message, part: Part): SearchDocument[] {

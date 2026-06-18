@@ -188,7 +188,7 @@ async function ensureBackgroundIndex(
     return
   }
 
-  const blocking = allowBlocking && !sidecar.hasDocuments()
+  const blocking = allowBlocking && (delta.kind === "full" || !sidecar.hasDocuments())
   diagnostics.push({
     kind: "indexing",
     message: blocking

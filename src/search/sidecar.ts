@@ -613,10 +613,35 @@ export class SearchSidecar {
     }))
   }
 
-  getSessionDocumentTexts(sessionID: string): Array<{ role: string | null; text: string }> {
+  getSessionDocumentTexts(sessionID: string): Array<{
+    messageID: string | null
+    partID: string | null
+    role: string | null
+    partType: string | null
+    text: string
+    metadataJson: string
+  }> {
     return this.db
-      .prepare("select role, text from document where session_id = ? order by rowid asc")
-      .all(sessionID) as Array<{ role: string | null; text: string }>
+      .prepare(`
+        select
+          message_id as messageID,
+          part_id as partID,
+          role,
+          part_type as partType,
+          text,
+          metadata_json as metadataJson
+        from document
+        where session_id = ?
+        order by rowid asc
+      `)
+      .all(sessionID) as Array<{
+        messageID: string | null
+        partID: string | null
+        role: string | null
+        partType: string | null
+        text: string
+        metadataJson: string
+      }>
   }
 
   snippetsForSessions(sessionIDs: string[]) {

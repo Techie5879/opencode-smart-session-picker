@@ -29,13 +29,6 @@ function dateCategory(updated: number) {
   return date.toDateString()
 }
 
-function timeFooter(updated: number) {
-  return new Date(updated).toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-}
-
 function stateWord(state: DependencyState) {
   if (state === "available") return "ok"
   if (state === "disabled") return "off"
@@ -100,7 +93,9 @@ function searchTerms(query: string) {
   return [...new Set(query.trim().toLowerCase().split(/\s+/).filter(Boolean))].sort((a, b) => b.length - a.length)
 }
 
-function highlightSegments(text: string, query: string) {
+function highlightSegments(text: string, query: string, highlights?: Array<{ start: number; end: number }>) {
+  if (highlights?.length) return segmentsFromRanges(text, highlights)
+
   const terms = searchTerms(query)
   if (!terms.length) return [{ text, highlight: false }]
 
@@ -131,6 +126,27 @@ function highlightSegments(text: string, query: string) {
     if (range.start > index) segments.push({ text: text.slice(index, range.start), highlight: false })
     segments.push({ text: text.slice(range.start, range.end), highlight: true })
     index = range.end
+  }
+  if (index < text.length) segments.push({ text: text.slice(index), highlight: false })
+  return segments
+}
+
+function segmentsFromRanges(text: string, input: Array<{ start: number; end: number }>) {
+  const ranges = input
+    .map((range) => ({
+      start: Math.max(0, Math.min(text.length, range.start)),
+      end: Math.max(0, Math.min(text.length, range.end)),
+    }))
+    .filter((range) => range.end > range.start)
+    .sort((a, b) => a.start - b.start || b.end - a.end)
+  if (!ranges.length) return [{ text, highlight: false }]
+
+  const segments: Array<{ text: string; highlight: boolean }> = []
+  let index = 0
+  for (const range of ranges) {
+    if (range.start > index) segments.push({ text: text.slice(index, range.start), highlight: false })
+    segments.push({ text: text.slice(range.start, range.end), highlight: true })
+    index = Math.max(index, range.end)
   }
   if (index < text.length) segments.push({ text: text.slice(index), highlight: false })
   return segments
@@ -198,6 +214,29 @@ function StatusBar(props: {
   )
 }
 
+function attachmentBadgeColor(theme: TuiPluginApi["theme"]["current"], mime: string | undefined) {
+  if (mime?.startsWith("image/")) return theme.accent
+  if (mime === "application/pdf") return theme.primary
+  return theme.secondary
+}
+
+function previewRoleLabel(role: string) {
+  const normalized = role.replace(/^\[|\]$/g, "").toLowerCase()
+  if (normalized === "user") return "You"
+  if (normalized === "assistant") return "Assistant"
+  return normalized ? normalized[0]!.toUpperCase() + normalized.slice(1) : "Message"
+}
+
+function previewLineText(line: SessionPreview["lines"][number]) {
+  return line.kind === "role" ? previewRoleLabel(line.text) : line.text
+}
+
+function previewLineColor(theme: TuiPluginApi["theme"]["current"], line: SessionPreview["lines"][number]) {
+  if (line.isMatch) return theme.accent
+  if (line.kind !== "role") return theme.text
+  return line.text.replace(/^\[|\]$/g, "").toLowerCase() === "assistant" ? theme.secondary : theme.primary
+}
+
 function PreviewPane(props: {
   api: TuiPluginApi
   preview: SessionPreview | undefined
@@ -256,31 +295,45 @@ function PreviewPane(props: {
                 when={line.kind !== "separator"}
                 fallback={<box height={1} />}
               >
-                <text
-                  fg={
-                    line.isMatch
-                      ? theme.accent
-                      : line.kind === "role"
-                        ? theme.primary
-                        : theme.text
-                  }
-                  attributes={line.kind === "role" ? TextAttributes.BOLD : undefined}
-                  wrapMode="word"
-                >
-                  <For each={line.isMatch ? highlightSegments(line.text || " ", props.query) : [{ text: line.text || " ", highlight: false }]}>
-                    {(segment) => (
-                      <span
-                        style={
-                          segment.highlight
-                            ? { fg: theme.selectedListItemText, bg: theme.accent }
-                            : { fg: line.isMatch ? theme.text : line.kind === "role" ? theme.primary : theme.text }
+                <Show
+                  when={line.kind === "attachment" && line.attachment}
+                  fallback={
+                    <text
+                      fg={previewLineColor(theme, line)}
+                      attributes={line.kind === "role" || line.kind === "title" ? TextAttributes.BOLD : undefined}
+                      wrapMode="word"
+                    >
+                      <For
+                        each={
+                          line.isMatch
+                            ? highlightSegments(previewLineText(line) || " ", props.query, line.highlights)
+                            : [{ text: previewLineText(line) || " ", highlight: false }]
                         }
                       >
-                        {segment.text}
-                      </span>
-                    )}
-                  </For>
-                </text>
+                        {(segment) => (
+                          <span
+                            style={
+                              segment.highlight
+                                ? { fg: theme.selectedListItemText, bg: theme.accent }
+                                : { fg: line.isMatch ? theme.text : previewLineColor(theme, line) }
+                            }
+                          >
+                            {segment.text}
+                          </span>
+                        )}
+                      </For>
+                    </text>
+                  }
+                >
+                  <text wrapMode="none">
+                    <span style={{ bg: attachmentBadgeColor(theme, line.attachment?.mime), fg: theme.background }}>
+                      {` ${line.attachment?.badge ?? "file"} `}
+                    </span>
+                    <span style={{ bg: theme.backgroundElement, fg: line.isMatch ? theme.accent : theme.textMuted }}>
+                      {` ${line.attachment?.label ?? "attachment"} `}
+                    </span>
+                  </text>
+                </Show>
               </Show>
             )}
           </For>
@@ -523,7 +576,6 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
         title: s.title,
         value: s.id,
         category: dateCategory(s.updated),
-        footer: timeFooter(s.updated),
         gutter: isWorkingStatus(status) ? () => <Spinner api={props.api} /> : undefined,
       }
     })

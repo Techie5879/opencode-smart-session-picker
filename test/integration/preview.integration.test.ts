@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { Message, Part } from "@opencode-ai/sdk/v2"
-import { linesFromSyncedState, sanitizePreviewTextLines } from "../../src/search/preview"
+import {
+  applyPreviewWindow,
+  linesFromSyncedState,
+  previewLinesFromDocumentRows,
+  sanitizePreviewTextLines,
+} from "../../src/search/preview"
 
 describe("session preview", () => {
   test("collapses multiline image data URLs", () => {
@@ -92,12 +97,76 @@ describe("session preview", () => {
     const lines = await linesFromSyncedState(api, "ses_one")
 
     expect(lines?.map((line) => line.text)).toEqual([
-      "[user]",
+      "user",
       "find semantic sessions",
       "",
-      "[assistant]",
+      "assistant",
       "ranked results",
       "",
+    ])
+  })
+
+  test("groups sidecar text and file rows into one preview message", () => {
+    const lines = previewLinesFromDocumentRows([
+      {
+        messageID: null,
+        role: null,
+        partType: null,
+        text: "Pipeline preprocess failures investigation",
+      },
+      {
+        messageID: "msg_user",
+        partID: "part_text",
+        role: "user",
+        partType: "text",
+        text: "[Image 1]\n\ncan you check what is going on here",
+      },
+      {
+        messageID: "msg_user",
+        partID: "part_file",
+        role: "user",
+        partType: "file",
+        text: "clipboard\ndata:image/png;base64,abc\nimage/png\nclipboard",
+      },
+    ])
+
+    expect(lines.map((line) => line.text)).toEqual([
+      "Pipeline preprocess failures investigation",
+      "",
+      "user",
+      "[Image 1]",
+      "",
+      "can you check what is going on here",
+      "img clipboard",
+      "",
+    ])
+    expect(lines.filter((line) => line.text === "user")).toHaveLength(1)
+    expect(lines.find((line) => line.kind === "attachment")?.attachment).toEqual({
+      badge: "img",
+      label: "clipboard",
+      mime: "image/png",
+    })
+  })
+
+  test("marks fuzzy preview highlights when no exact substring matches", () => {
+    const preview = applyPreviewWindow(
+      "ses_one",
+      [
+        { text: "You", kind: "role", isMatch: false },
+        { text: "Splitter-v3 Firestore document processing errors", kind: "text", isMatch: false },
+      ],
+      "sfdpe",
+      10,
+    )
+
+    expect(preview.matchCount).toBe(1)
+    expect(preview.lines[0]?.isMatch).toBe(true)
+    expect(preview.lines[0]?.highlights).toEqual([
+      { start: 0, end: 1 },
+      { start: 12, end: 13 },
+      { start: 22, end: 23 },
+      { start: 31, end: 32 },
+      { start: 35, end: 36 },
     ])
   })
 })
