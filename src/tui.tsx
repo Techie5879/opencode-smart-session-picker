@@ -1,8 +1,9 @@
 /** @jsxImportSource @opentui/solid */
 import { TextAttributes, type RGBA, type ScrollBoxRenderable } from "@opentui/core"
-import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
+import { useKeyboard, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { For, Show, createEffect, createSignal, onCleanup, onMount, untrack } from "solid-js"
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import type { TuiDialogSelectOption, TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import "opentui-spinner/solid"
 import { resolveSearchConfig } from "./search/config"
 import { dependencySnapshot, elapsedMs, errorFields, logEvent, nextLogID, nowMs, queryStats } from "./search/logging"
 import { PREVIEW_CONTEXT_LINES, loadSessionPreview, type SessionPreview } from "./search/preview"
@@ -12,6 +13,12 @@ import type { DependencyState, SearchDependencyStatus, SearchEnvironmentStatus, 
 
 const PLUGIN_ID = "local.smart-session-picker"
 const SEARCH_DEBOUNCE_MS = 150
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+type SessionStatus = ReturnType<TuiPluginApi["state"]["session"]["status"]>
+type SessionOption = TuiDialogSelectOption<string> & {
+  gutter?: () => JSX.Element
+}
 
 function dateCategory(updated: number) {
   const date = new Date(updated)
@@ -50,6 +57,24 @@ function shortName(name: SearchDependencyStatus["name"]) {
   return name
 }
 
+function isWorkingStatus(status: SessionStatus) {
+  return status?.type === "busy" || status?.type === "retry"
+}
+
+function Spinner(props: { api: TuiPluginApi; children?: JSX.Element; color?: RGBA }) {
+  const theme = props.api.theme.current
+  const color = () => props.color ?? theme.textMuted
+  return (
+    <Show when={props.api.kv.get("animations_enabled", true)} fallback={<text fg={color()}>⋯ {props.children}</text>}>
+      <box flexDirection="row" gap={1}>
+        <spinner frames={SPINNER_FRAMES} interval={80} color={color()} />
+        <Show when={props.children}>
+          <text fg={color()}>{props.children}</text>
+        </Show>
+      </box>
+    </Show>
+  )
+}
 
 /** Derive a summary color for a mode based on its dependency health. */
 function modeLabelColor(
@@ -479,12 +504,21 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
   })
 
   const options = () =>
-    sessions().map((s) => ({
-      title: s.title,
-      value: s.id,
-      category: dateCategory(s.updated),
-      footer: timeFooter(s.updated),
-    }))
+    sessions().map((s): SessionOption => {
+      const status = props.api.state.session.status(s.id)
+      return {
+        title: s.title,
+        value: s.id,
+        category: dateCategory(s.updated),
+        footer: timeFooter(s.updated),
+        gutter: isWorkingStatus(status) ? () => <Spinner api={props.api} /> : undefined,
+      }
+    })
+
+  const currentSessionID = () => {
+    const route = props.api.route.current
+    return route.name === "session" && typeof route.params?.sessionID === "string" ? route.params.sessionID : undefined
+  }
 
   const { DialogSelect } = props.api.ui
 
@@ -498,6 +532,7 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
             options={options()}
             skipFilter={true}
             onFilter={updateQuery}
+            current={currentSessionID()}
             onMove={(opt: { value: string }) => {
               setSelectedSessionID(opt.value)
               loadPreview(opt.value)

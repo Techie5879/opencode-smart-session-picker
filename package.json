@@ -15,11 +15,12 @@
     "test:perf:live": "OPENCODE_SMART_PICKER_LIVE_PERF=1 bun test test/performance"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.14.50",
-    "@opencode-ai/sdk": "^1.14.50",
-    "@opentui/core": "^0.2.9",
-    "@opentui/keymap": "^0.2.9",
-    "@opentui/solid": "^0.2.9",
+    "@opencode-ai/plugin": "^1.17.8",
+    "@opencode-ai/sdk": "^1.17.8",
+    "@opentui/core": "^0.3.4",
+    "@opentui/keymap": "^0.3.4",
+    "@opentui/solid": "^0.3.4",
+    "opentui-spinner": "0.0.7",
     "solid-js": "^1.9.12",
     "sqlite-vec": "^0.1.9"
   },

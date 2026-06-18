@@ -4,12 +4,18 @@ import type { SourceSessionCorpus } from "./types"
 
 const CORPUS_FETCH_CONCURRENCY = 8
 
+function clientErrorMessage(error: unknown, fallback: string) {
+  if (typeof error === "string") return error
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") return error.message
+  return fallback
+}
+
 export async function listOpenCodeSessions(api: TuiPluginApi, query?: string) {
   const response = await api.client.session.list({
     roots: true,
     search: query?.trim() || undefined,
   })
-  if (response.error) throw new Error(typeof response.error === "string" ? response.error : "Failed to list sessions")
+  if (response.error) throw new Error(clientErrorMessage(response.error, "Failed to list sessions"))
   return response.data ?? []
 }
 
