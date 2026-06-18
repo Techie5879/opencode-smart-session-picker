@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { TextAttributes, type RGBA, type ScrollBoxRenderable } from "@opentui/core"
+import { RGBA, TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { For, Show, createEffect, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import type { TuiDialogSelectOption, TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
@@ -55,6 +55,11 @@ function shortName(name: SearchDependencyStatus["name"]) {
   if (name === "sqlite-vec") return "sqlite-vec"
   if (name === "llama-server") return "llama-server"
   return name
+}
+
+function opaque(color: RGBA) {
+  const [r, g, b] = color.toInts()
+  return RGBA.fromInts(r, g, b, 255)
 }
 
 function isWorkingStatus(status: SessionStatus) {
@@ -134,9 +139,10 @@ function StatusBar(props: {
   modeError: string | undefined
 }) {
   const theme = props.api.theme.current
+  const panel = opaque(theme.backgroundPanel)
 
   return (
-    <box flexDirection="column" paddingLeft={4} paddingRight={4} paddingBottom={1}>
+    <box flexDirection="column" paddingLeft={4} paddingRight={4} paddingBottom={1} backgroundColor={panel}>
       <Show
         when={props.environment}
         fallback={
@@ -197,6 +203,7 @@ function PreviewPane(props: {
   height: number
 }) {
   const theme = props.api.theme.current
+  const panel = opaque(theme.backgroundPanel)
   const scrollHeight = () => Math.max(6, props.height - 3)
   let scrollbox: ScrollBoxRenderable | undefined
 
@@ -215,6 +222,7 @@ function PreviewPane(props: {
       border={true}
       borderStyle="rounded"
       borderColor={theme.borderSubtle}
+      backgroundColor={panel}
       title="Preview"
       titleAlignment="left"
       paddingLeft={1}
@@ -521,11 +529,12 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
   }
 
   const { DialogSelect } = props.api.ui
+  const panel = () => opaque(props.api.theme.current.backgroundPanel)
 
   return (
-    <box flexDirection="column">
-      <box flexDirection="row" height={pickerHeight()} flexShrink={0}>
-        <box flexGrow={3} flexBasis={0} height={pickerHeight()} flexShrink={0}>
+    <box flexDirection="column" backgroundColor={panel()}>
+      <box flexDirection="row" height={pickerHeight()} flexShrink={0} backgroundColor={panel()}>
+        <box flexGrow={3} flexBasis={0} height={pickerHeight()} flexShrink={0} backgroundColor={panel()}>
           <DialogSelect
             title={`Sessions · ${mode()}`}
             placeholder={`Search with ${mode()}...`}
