@@ -1,6 +1,6 @@
 import { resolveSearchConfig } from "./config"
 import { checkEmbeddingServer, checkFzf } from "./dependencies"
-import { SearchSidecar } from "./sidecar"
+import { openSharedSidecar } from "./sidecar"
 import type { SearchConfig, SearchDependencyStatus, SearchEnvironmentStatus, SearchMode } from "./types"
 
 async function sourceDbStatus(config: SearchConfig): Promise<SearchDependencyStatus> {
@@ -21,9 +21,8 @@ async function sidecarStatus(config: SearchConfig): Promise<{
   sidecar: SearchDependencyStatus
   sqliteVec: SearchDependencyStatus
 }> {
-  let sidecar: SearchSidecar | undefined
   try {
-    sidecar = await SearchSidecar.open(config)
+    const sidecar = await openSharedSidecar(config)
     const documents = sidecar.hasDocuments() ? "indexed" : "empty"
     if (config.disableVector) {
       return {
@@ -48,8 +47,6 @@ async function sidecarStatus(config: SearchConfig): Promise<{
       },
       sqliteVec: { name: "sqlite-vec", state: "unavailable", message: "Sidecar index is unavailable." },
     }
-  } finally {
-    sidecar?.close()
   }
 }
 

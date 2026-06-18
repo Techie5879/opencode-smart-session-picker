@@ -11,7 +11,7 @@ import { checkSearchEnvironment } from "./search/status"
 import type { DependencyState, SearchDependencyStatus, SearchEnvironmentStatus, SearchMode } from "./search/types"
 
 const PLUGIN_ID = "local.smart-session-picker"
-const SEARCH_DEBOUNCE_MS = 300
+const SEARCH_DEBOUNCE_MS = 150
 
 function dateCategory(updated: number) {
   const date = new Date(updated)
@@ -390,6 +390,12 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
     const q = query()
     const m = mode()
     if (timer) clearTimeout(timer)
+    // Empty queries are the recency listing - refresh immediately so opening
+    // the picker and clearing a search both feel instant.
+    if (!q.trim()) {
+      void refresh(q, m)
+      return
+    }
     timer = setTimeout(() => void refresh(q, m), SEARCH_DEBOUNCE_MS)
   })
 
@@ -536,6 +542,7 @@ const tui: TuiPlugin = async (api) => {
   }
 
   api.keymap.registerLayer({
+    priority: 1000,
     commands: [
       {
         namespace: "palette",
@@ -548,6 +555,11 @@ const tui: TuiPlugin = async (api) => {
         run: openSmartSessionDialog,
       },
     ],
+    bindings: api.tuiConfig.keybinds.get("session.list").map((binding) => ({
+      ...binding,
+      cmd: openSmartSessionDialog,
+      desc: binding.desc ?? "Switch session",
+    })),
   })
 }
 

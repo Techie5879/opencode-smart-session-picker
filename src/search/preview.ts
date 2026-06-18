@@ -2,7 +2,7 @@ import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { Message, Part } from "@opencode-ai/sdk/v2"
 import { resolveSearchConfig } from "./config"
 import { elapsedMs, errorFields, logEvent, nextLogID, nowMs, queryStats, timePhase } from "./logging"
-import { SearchSidecar } from "./sidecar"
+import { openSharedSidecar } from "./sidecar"
 
 /** Number of lines of context shown in the preview pane. */
 export const PREVIEW_CONTEXT_LINES = 30
@@ -87,10 +87,9 @@ export async function loadSessionPreview(
     contextLines,
   })
 
-  let sidecar: SearchSidecar | undefined
   try {
     await timePhase(phases, "sidecarPreviewMs", async () => {
-      sidecar = await SearchSidecar.open(config)
+      const sidecar = await openSharedSidecar(config)
       if (sidecar.hasDocuments()) {
         const rows = sidecar.getSessionDocumentTexts(sessionID)
         if (rows.length) {
@@ -106,8 +105,6 @@ export async function loadSessionPreview(
       ...errorFields(err),
     })
     /* sidecar unavailable */
-  } finally {
-    sidecar?.close()
   }
 
   if (!rawLines) {
@@ -150,13 +147,8 @@ export async function loadSessionPreview(
 function rowsToLines(rows: Array<{ role: string | null; text: string }>): PreviewLine[] {
   const out: PreviewLine[] = []
   for (const row of rows) {
-    const cleaned = row.text
-      .replace(/^Title: .*\n?/m, "")
-      .replace(/^Role: .*\n?/m, "")
-      .replace(/^(?:Path|Directory): .*\n?/m, "")
-      .trim()
-    if (row.role) out.push({ text: `[${row.role}]`, kind: "role", isMatch: false })
-    for (const l of sanitizePreviewTextLines(cleaned)) out.push({ text: l, kind: "text", isMatch: false })
+    out.push({ text: row.role ? `[${row.role}]` : "[title]", kind: "role", isMatch: false })
+    for (const l of sanitizePreviewTextLines(row.text.trim())) out.push({ text: l, kind: "text", isMatch: false })
     out.push({ text: "", kind: "separator", isMatch: false })
   }
   return out

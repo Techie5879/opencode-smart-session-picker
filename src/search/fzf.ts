@@ -11,12 +11,7 @@ export type FzfResult =
   | { status: "error"; sessionIDs: []; message: string }
 
 function candidateLine(candidate: FzfCandidate) {
-  const parts = [
-    candidate.session.title,
-    candidate.session.path,
-    candidate.session.directory,
-    candidate.snippet?.replace(/\s+/g, " "),
-  ].filter(Boolean)
+  const parts = [candidate.session.title, candidate.snippet?.replace(/\s+/g, " ")].filter(Boolean)
   return `${candidate.session.id}\t${parts.join(" ")}`
 }
 
@@ -31,7 +26,7 @@ export async function runFzfSearch(input: { bin: string; query: string; candidat
       "--scheme=history",
       "--delimiter",
       "\t",
-      "--with-nth",
+      "--nth",
       "2..",
       "--accept-nth",
       "1",

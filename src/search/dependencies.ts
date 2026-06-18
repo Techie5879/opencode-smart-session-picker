@@ -82,7 +82,9 @@ export async function checkEmbeddingServer(config: SearchConfig) {
   const healthUrls = ["/health", "/v1/health"]
   for (const healthUrl of healthUrls) {
     try {
-      const response = await fetch(new URL(healthUrl, config.embedBaseUrl))
+      const response = await fetch(new URL(healthUrl, config.embedBaseUrl), {
+        signal: AbortSignal.timeout(1_500),
+      })
       if (response.ok) return { state: "available" as const }
     } catch {
       continue
