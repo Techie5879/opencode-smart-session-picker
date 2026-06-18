@@ -2,6 +2,8 @@ import { createHash } from "node:crypto"
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2"
 import type { SearchDocument } from "./types"
 
+export const SEARCH_EXTRACTOR_VERSION = "4"
+
 function hash(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
 }
@@ -21,16 +23,11 @@ function sourceText(part: Part) {
     case "reasoning":
       return
     case "tool":
-      return joinText([
-        part.tool,
-        part.state.status === "completed" ? part.state.title : undefined,
-        part.state.status === "completed" ? part.state.output : undefined,
-        part.state.status === "error" ? part.state.error : undefined,
-      ])
+      return
     case "file":
       return joinText([
         part.filename,
-        part.url,
+        searchableFileUrl(part.url),
         part.mime,
         part.source?.type === "file" || part.source?.type === "symbol" ? part.source.path : undefined,
         part.source?.type === "symbol" ? part.source.name : undefined,
@@ -39,15 +36,22 @@ function sourceText(part: Part) {
     case "patch":
       return part.files.join("\n")
     case "subtask":
-      return joinText([part.prompt, part.description, part.agent, part.command])
+      return
     case "agent":
-      return joinText([part.name, part.source?.value])
+      return
     default:
       return
   }
 }
 
+function searchableFileUrl(url: string | undefined) {
+  if (!url) return
+  if (/^data:/i.test(url)) return
+  return url
+}
+
 export function extractSearchDocuments(session: Session, message: Message, part: Part): SearchDocument[] {
+  if (message.role !== "user") return []
   const text = sourceText(part)
   if (!text) return []
 
@@ -61,12 +65,7 @@ export function extractSearchDocuments(session: Session, message: Message, part:
     sessionTimeUpdated: session.time.updated,
     messageTimeCreated: message.time.created,
   }
-  const indexedText = joinText([
-    `Title: ${session.title}`,
-    `Role: ${message.role}`,
-    session.path ? `Path: ${session.path}` : session.directory ? `Directory: ${session.directory}` : undefined,
-    text,
-  ])
+  const indexedText = text
 
   return [
     {
@@ -93,7 +92,31 @@ export function extractSessionDocuments(
     parts: Part[]
   }>,
 ) {
-  return messages.flatMap((message) =>
+  const title = session.title?.trim()
+  const titleDocument: SearchDocument[] = title
+    ? [
+        {
+          docID: `opencode:${session.id}:title:0`,
+          sessionID: session.id,
+          chunkIndex: 0,
+          synthetic: true,
+          ignored: false,
+          text: title,
+          metadata: {
+            title: session.title,
+            directory: session.directory,
+            path: session.path,
+            projectID: session.projectID,
+            workspaceID: session.workspaceID,
+            parentID: session.parentID,
+            sessionTimeUpdated: session.time.updated,
+          },
+          sourceHash: hash({ session: session.id, title, time: session.time.updated }),
+        },
+      ]
+    : []
+
+  return titleDocument.concat(messages.flatMap((message) =>
     message.parts.flatMap((part) => extractSearchDocuments(session, message.info, part)),
-  )
+  ))
 }

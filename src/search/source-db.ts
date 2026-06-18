@@ -15,9 +15,20 @@ function numberValue(value: unknown) {
   return typeof value === "number" ? value : Number(value) || 0
 }
 
-export function readSourceCorpusFromDb(sourceDbPath: string): SourceSessionCorpus[] {
+export type SourceCorpusFilter = {
+  directory?: string
+}
+
+export function readSourceCorpusFromDb(sourceDbPath: string, filter: SourceCorpusFilter = {}): SourceSessionCorpus[] {
   const db = new Database(sourceDbPath, { readonly: true })
   try {
+    const where = ["s.time_archived is null"]
+    const params: string[] = []
+    if (filter.directory) {
+      where.push("s.directory = ?")
+      params.push(filter.directory)
+    }
+
     const rows = db
       .prepare(`
         select
@@ -40,10 +51,10 @@ export function readSourceCorpusFromDb(sourceDbPath: string): SourceSessionCorpu
         from session s
         join message m on m.session_id = s.id
         join part p on p.message_id = m.id and p.session_id = s.id
-        where s.time_archived is null
+        where ${where.join(" and ")}
         order by s.time_updated desc, m.time_created asc, m.id asc, p.time_created asc, p.id asc
       `)
-      .all() as Array<Record<string, unknown>>
+      .all(...params) as Array<Record<string, unknown>>
 
     const bySession = new Map<string, SourceSessionCorpus>()
     const byMessage = new Map<string, { info: Message; parts: Part[] }>()

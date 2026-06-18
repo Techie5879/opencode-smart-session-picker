@@ -59,7 +59,8 @@ Start conservative:
   to search reasoning.
 - `part.data.type = "tool"`: index the tool name, completed title, completed
   output, and error text if present. Down-weight verbose outputs.
-- `part.data.type = "file"`: index filename, URL, MIME type, and source fields.
+- `part.data.type = "file"`: index filename, non-`data:` URL, MIME type, and
+  source fields. Do not index base64 payloads from pasted image/PDF data URLs.
 - `part.data.type = "patch"`: index patch summary/content, but chunk carefully.
 - `part.data.type = "subtask"`: index task description/prompt if present.
 

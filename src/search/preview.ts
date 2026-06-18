@@ -2,15 +2,21 @@ import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { Message, Part } from "@opencode-ai/sdk/v2"
 import { resolveSearchConfig } from "./config"
 import { elapsedMs, errorFields, logEvent, nextLogID, nowMs, queryStats, timePhase } from "./logging"
-import { SearchSidecar } from "./sidecar"
+import { openSharedSidecar } from "./sidecar"
 
 /** Number of lines of context shown in the preview pane. */
 export const PREVIEW_CONTEXT_LINES = 30
 
 export type PreviewLine = {
   text: string
-  kind: "role" | "text" | "separator"
+  kind: "role" | "title" | "text" | "attachment" | "separator"
   isMatch: boolean
+  highlights?: Array<{ start: number; end: number }>
+  attachment?: {
+    badge: string
+    label: string
+    mime?: string
+  }
 }
 
 export type SessionPreview = {
@@ -21,6 +27,25 @@ export type SessionPreview = {
 }
 
 const IMAGE_DATA_URL_START = /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+-]+=[^;,\s]+)*;base64,/i
+
+const MIME_BADGE: Record<string, string> = {
+  "text/plain": "txt",
+  "image/png": "img",
+  "image/jpeg": "img",
+  "image/gif": "img",
+  "image/webp": "img",
+  "application/pdf": "pdf",
+  "application/x-directory": "dir",
+}
+
+type PreviewDocumentRow = {
+  messageID: string | null
+  partID?: string | null
+  role: string | null
+  partType: string | null
+  text: string
+  metadataJson?: string | null
+}
 
 export function sanitizePreviewTextLines(text: string): string[] {
   const lines: string[] = []
@@ -87,14 +112,13 @@ export async function loadSessionPreview(
     contextLines,
   })
 
-  let sidecar: SearchSidecar | undefined
   try {
     await timePhase(phases, "sidecarPreviewMs", async () => {
-      sidecar = await SearchSidecar.open(config)
+      const sidecar = await openSharedSidecar(config)
       if (sidecar.hasDocuments()) {
         const rows = sidecar.getSessionDocumentTexts(sessionID)
         if (rows.length) {
-          rawLines = rowsToLines(rows)
+          rawLines = previewLinesFromDocumentRows(rows)
           source = "sidecar"
         }
       }
@@ -106,8 +130,6 @@ export async function loadSessionPreview(
       ...errorFields(err),
     })
     /* sidecar unavailable */
-  } finally {
-    sidecar?.close()
   }
 
   if (!rawLines) {
@@ -132,7 +154,7 @@ export async function loadSessionPreview(
     return undefined
   }
 
-  const result = applyWindow(sessionID, rawLines, query, contextLines)
+  const result = applyPreviewWindow(sessionID, rawLines, query, contextLines)
   logEvent(api, "debug", "preview.loaded", {
     component: "preview",
     previewID,
@@ -147,29 +169,114 @@ export async function loadSessionPreview(
   return result
 }
 
-function rowsToLines(rows: Array<{ role: string | null; text: string }>): PreviewLine[] {
+export function previewLinesFromDocumentRows(rows: PreviewDocumentRow[]): PreviewLine[] {
   const out: PreviewLine[] = []
-  for (const row of rows) {
-    const cleaned = row.text
-      .replace(/^Title: .*\n?/m, "")
-      .replace(/^Role: .*\n?/m, "")
-      .replace(/^(?:Path|Directory): .*\n?/m, "")
-      .trim()
-    if (row.role) out.push({ text: `[${row.role}]`, kind: "role", isMatch: false })
-    for (const l of sanitizePreviewTextLines(cleaned)) out.push({ text: l, kind: "text", isMatch: false })
-    out.push({ text: "", kind: "separator", isMatch: false })
+  let current:
+    | {
+        messageID: string
+        role: string | null
+        lines: PreviewLine[]
+      }
+    | undefined
+
+  function flushMessage() {
+    if (!current) return
+    if (current.lines.length) {
+      out.push({ text: current.role ?? "message", kind: "role", isMatch: false })
+      out.push(...current.lines)
+      out.push({ text: "", kind: "separator", isMatch: false })
+    }
+    current = undefined
   }
+
+  for (const row of rows) {
+    if (!row.messageID) {
+      flushMessage()
+      for (const l of sanitizePreviewTextLines(row.text.trim())) out.push({ text: l, kind: "title", isMatch: false })
+      out.push({ text: "", kind: "separator", isMatch: false })
+      continue
+    }
+
+    if (!current || current.messageID !== row.messageID) {
+      flushMessage()
+      current = { messageID: row.messageID, role: row.role, lines: [] }
+    }
+
+    if (row.partType === "file") {
+      const attachment = fileAttachment(row)
+      current.lines.push({
+        text: `${attachment.badge} ${attachment.label}`.trim(),
+        kind: "attachment",
+        isMatch: false,
+        attachment,
+      })
+    } else {
+      for (const l of sanitizePreviewTextLines(row.text.trim())) current.lines.push({ text: l, kind: "text", isMatch: false })
+    }
+  }
+  flushMessage()
   return out
+}
+
+function fileAttachment(row: PreviewDocumentRow) {
+  const metadata = parseMetadata(row.metadataJson)
+  const lines = sanitizePreviewTextLines(row.text.trim())
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const mime = stringValue(metadata.mime) ?? lines.find(isMimeType)
+  const label =
+    stringValue(metadata.filename) ??
+    lines.find((line) => line !== "[image]" && !isMimeType(line) && !line.startsWith("data:")) ??
+    mime ??
+    "attachment"
+  return {
+    badge: mime ? MIME_BADGE[mime] ?? mime.split("/").at(-1) ?? "file" : "file",
+    label,
+    mime,
+  }
+}
+
+function parseMetadata(value: string | null | undefined) {
+  if (!value) return {}
+  try {
+    return JSON.parse(value) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function isMimeType(value: string) {
+  return /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(value)
 }
 
 function linesFromMessages(messages: Message[], partsForMessage: (messageID: string) => readonly Part[]): PreviewLine[] {
   const out: PreviewLine[] = []
   const sorted = [...messages].sort((a, b) => a.time.created - b.time.created)
   for (const msg of sorted) {
-    out.push({ text: `[${msg.role}]`, kind: "role", isMatch: false })
+    out.push({ text: msg.role, kind: "role", isMatch: false })
     for (const part of partsForMessage(msg.id)) {
       if (part.type === "text" && !part.ignored) {
         for (const l of sanitizePreviewTextLines(part.text)) out.push({ text: l, kind: "text", isMatch: false })
+      }
+      if (part.type === "file") {
+        const attachment = fileAttachment({
+          messageID: msg.id,
+          partID: part.id,
+          role: msg.role,
+          partType: part.type,
+          text: [part.filename, part.mime].filter(Boolean).join("\n"),
+          metadataJson: JSON.stringify({ filename: part.filename, mime: part.mime }),
+        })
+        out.push({
+          text: `${attachment.badge} ${attachment.label}`.trim(),
+          kind: "attachment",
+          isMatch: false,
+          attachment,
+        })
       }
     }
     out.push({ text: "", kind: "separator", isMatch: false })
@@ -189,7 +296,7 @@ export async function linesFromSyncedState(api: TuiPluginApi, sessionID: string)
   }
 }
 
-function applyWindow(
+export function applyPreviewWindow(
   sessionID: string,
   all: PreviewLine[],
   query: string,
@@ -204,8 +311,12 @@ function applyWindow(
 
   if (terms.length) {
     for (const line of all) {
-      if (line.kind === "text" && terms.some((t) => line.text.toLowerCase().includes(t))) {
+      if (line.kind !== "text" && line.kind !== "title" && line.kind !== "attachment") continue
+
+      const highlights = previewHighlights(line.text, terms)
+      if (highlights.length) {
         line.isMatch = true
+        line.highlights = highlights
         matchCount++
       }
     }
@@ -219,6 +330,64 @@ function applyWindow(
   }
 
   return { sessionID, lines: all.slice(0, contextLines), matchCount: 0, totalLines: all.length }
+}
+
+function previewHighlights(text: string, terms: string[]) {
+  const exact = exactHighlights(text, terms)
+  if (exact.length) return exact
+  return fuzzyHighlights(text, terms)
+}
+
+function exactHighlights(text: string, terms: string[]) {
+  const lower = text.toLowerCase()
+  const ranges: Array<{ start: number; end: number }> = []
+  for (const term of terms) {
+    let from = 0
+    while (from < lower.length) {
+      const start = lower.indexOf(term, from)
+      if (start < 0) break
+      ranges.push({ start, end: start + term.length })
+      from = start + Math.max(1, term.length)
+    }
+  }
+  return mergeRanges(ranges)
+}
+
+function fuzzyHighlights(text: string, terms: string[]) {
+  const lower = text.toLowerCase()
+  const ranges: Array<{ start: number; end: number }> = []
+  for (const term of terms) {
+    const matched = fuzzyTermHighlights(lower, term)
+    if (matched.length) ranges.push(...matched)
+  }
+  return mergeRanges(ranges)
+}
+
+function fuzzyTermHighlights(lower: string, term: string) {
+  if (!term) return []
+  const ranges: Array<{ start: number; end: number }> = []
+  let from = 0
+  for (const char of term) {
+    const index = lower.indexOf(char, from)
+    if (index < 0) return []
+    ranges.push({ start: index, end: index + 1 })
+    from = index + 1
+  }
+  return ranges
+}
+
+function mergeRanges(input: Array<{ start: number; end: number }>) {
+  if (!input.length) return []
+  const ranges = input
+    .filter((range) => range.end > range.start)
+    .sort((a, b) => a.start - b.start || b.end - a.end)
+  const merged: Array<{ start: number; end: number }> = []
+  for (const range of ranges) {
+    const previous = merged.at(-1)
+    if (previous && range.start <= previous.end) previous.end = Math.max(previous.end, range.end)
+    else merged.push({ ...range })
+  }
+  return merged
 }
 
 async function linesFromApi(api: TuiPluginApi, sessionID: string): Promise<PreviewLine[] | undefined> {

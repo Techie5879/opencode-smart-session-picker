@@ -4,7 +4,12 @@ function normalize(rows: RankedCandidate[], key: "keywordScore" | "vectorScore")
   const values = rows.map((row) => row[key] ?? 0)
   const min = Math.min(...values)
   const max = Math.max(...values)
-  return new Map(rows.map((row) => [row.sessionID, max === min ? (values.length ? 1 : 0) : ((row[key] ?? 0) - min) / (max - min)]))
+  // All-equal scores normalize to 1 only when there is real signal; an
+  // all-zero column (e.g. no keyword hits at all) must stay at 0 so it does
+  // not dilute the other component.
+  return new Map(
+    rows.map((row) => [row.sessionID, max === min ? (max > 0 ? 1 : 0) : ((row[key] ?? 0) - min) / (max - min)]),
+  )
 }
 
 export function blendHybridScores(input: {

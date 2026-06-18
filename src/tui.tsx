@@ -1,8 +1,9 @@
 /** @jsxImportSource @opentui/solid */
-import { TextAttributes, type RGBA, type ScrollBoxRenderable } from "@opentui/core"
-import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
+import { RGBA, TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
+import { useKeyboard, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { For, Show, createEffect, createSignal, onCleanup, onMount, untrack } from "solid-js"
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import type { TuiDialogSelectOption, TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import "opentui-spinner/solid"
 import { resolveSearchConfig } from "./search/config"
 import { dependencySnapshot, elapsedMs, errorFields, logEvent, nextLogID, nowMs, queryStats } from "./search/logging"
 import { PREVIEW_CONTEXT_LINES, loadSessionPreview, type SessionPreview } from "./search/preview"
@@ -11,19 +12,21 @@ import { checkSearchEnvironment } from "./search/status"
 import type { DependencyState, SearchDependencyStatus, SearchEnvironmentStatus, SearchMode } from "./search/types"
 
 const PLUGIN_ID = "local.smart-session-picker"
-const SEARCH_DEBOUNCE_MS = 300
+const SEARCH_DEBOUNCE_MS = 150
+const DIALOG_PADDING_X = 2
+const DIALOG_PADDING_Y = 1
+const DIALOG_PANE_GAP = 2
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+type SessionStatus = ReturnType<TuiPluginApi["state"]["session"]["status"]>
+type SessionOption = TuiDialogSelectOption<string> & {
+  gutter?: () => JSX.Element
+}
 
 function dateCategory(updated: number) {
   const date = new Date(updated)
   if (date.toDateString() === new Date().toDateString()) return "Today"
   return date.toDateString()
-}
-
-function timeFooter(updated: number) {
-  return new Date(updated).toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  })
 }
 
 function stateWord(state: DependencyState) {
@@ -50,6 +53,29 @@ function shortName(name: SearchDependencyStatus["name"]) {
   return name
 }
 
+function opaque(color: RGBA) {
+  const [r, g, b] = color.toInts()
+  return RGBA.fromInts(r, g, b, 255)
+}
+
+function isWorkingStatus(status: SessionStatus) {
+  return status?.type === "busy" || status?.type === "retry"
+}
+
+function Spinner(props: { api: TuiPluginApi; children?: JSX.Element; color?: RGBA }) {
+  const theme = props.api.theme.current
+  const color = () => props.color ?? theme.textMuted
+  return (
+    <Show when={props.api.kv.get("animations_enabled", true)} fallback={<text fg={color()}>⋯ {props.children}</text>}>
+      <box flexDirection="row" gap={1}>
+        <spinner frames={SPINNER_FRAMES} interval={80} color={color()} />
+        <Show when={props.children}>
+          <text fg={color()}>{props.children}</text>
+        </Show>
+      </box>
+    </Show>
+  )
+}
 
 /** Derive a summary color for a mode based on its dependency health. */
 function modeLabelColor(
@@ -67,7 +93,9 @@ function searchTerms(query: string) {
   return [...new Set(query.trim().toLowerCase().split(/\s+/).filter(Boolean))].sort((a, b) => b.length - a.length)
 }
 
-function highlightSegments(text: string, query: string) {
+function highlightSegments(text: string, query: string, highlights?: Array<{ start: number; end: number }>) {
+  if (highlights?.length) return segmentsFromRanges(text, highlights)
+
   const terms = searchTerms(query)
   if (!terms.length) return [{ text, highlight: false }]
 
@@ -103,15 +131,37 @@ function highlightSegments(text: string, query: string) {
   return segments
 }
 
+function segmentsFromRanges(text: string, input: Array<{ start: number; end: number }>) {
+  const ranges = input
+    .map((range) => ({
+      start: Math.max(0, Math.min(text.length, range.start)),
+      end: Math.max(0, Math.min(text.length, range.end)),
+    }))
+    .filter((range) => range.end > range.start)
+    .sort((a, b) => a.start - b.start || b.end - a.end)
+  if (!ranges.length) return [{ text, highlight: false }]
+
+  const segments: Array<{ text: string; highlight: boolean }> = []
+  let index = 0
+  for (const range of ranges) {
+    if (range.start > index) segments.push({ text: text.slice(index, range.start), highlight: false })
+    segments.push({ text: text.slice(range.start, range.end), highlight: true })
+    index = Math.max(index, range.end)
+  }
+  if (index < text.length) segments.push({ text: text.slice(index), highlight: false })
+  return segments
+}
+
 function StatusBar(props: {
   api: TuiPluginApi
   environment: SearchEnvironmentStatus | undefined
   modeError: string | undefined
 }) {
   const theme = props.api.theme.current
+  const panel = opaque(theme.backgroundPanel)
 
   return (
-    <box flexDirection="column" paddingLeft={4} paddingRight={4} paddingBottom={1}>
+    <box flexDirection="column" paddingLeft={4} paddingRight={4} paddingBottom={1} backgroundColor={panel}>
       <Show
         when={props.environment}
         fallback={
@@ -164,6 +214,29 @@ function StatusBar(props: {
   )
 }
 
+function attachmentBadgeColor(theme: TuiPluginApi["theme"]["current"], mime: string | undefined) {
+  if (mime?.startsWith("image/")) return theme.accent
+  if (mime === "application/pdf") return theme.primary
+  return theme.secondary
+}
+
+function previewRoleLabel(role: string) {
+  const normalized = role.replace(/^\[|\]$/g, "").toLowerCase()
+  if (normalized === "user") return "You"
+  if (normalized === "assistant") return "Assistant"
+  return normalized ? normalized[0]!.toUpperCase() + normalized.slice(1) : "Message"
+}
+
+function previewLineText(line: SessionPreview["lines"][number]) {
+  return line.kind === "role" ? previewRoleLabel(line.text) : line.text
+}
+
+function previewLineColor(theme: TuiPluginApi["theme"]["current"], line: SessionPreview["lines"][number]) {
+  if (line.isMatch) return theme.accent
+  if (line.kind !== "role") return theme.text
+  return line.text.replace(/^\[|\]$/g, "").toLowerCase() === "assistant" ? theme.secondary : theme.primary
+}
+
 function PreviewPane(props: {
   api: TuiPluginApi
   preview: SessionPreview | undefined
@@ -172,7 +245,8 @@ function PreviewPane(props: {
   height: number
 }) {
   const theme = props.api.theme.current
-  const scrollHeight = () => Math.max(6, props.height - 3)
+  const panel = opaque(theme.backgroundPanel)
+  const scrollHeight = () => Math.max(6, props.height - 5)
   let scrollbox: ScrollBoxRenderable | undefined
 
   createEffect(() => {
@@ -190,10 +264,13 @@ function PreviewPane(props: {
       border={true}
       borderStyle="rounded"
       borderColor={theme.borderSubtle}
+      backgroundColor={panel}
       title="Preview"
       titleAlignment="left"
       paddingLeft={1}
       paddingRight={1}
+      paddingTop={1}
+      paddingBottom={1}
     >
       <Show
         when={props.preview}
@@ -218,31 +295,45 @@ function PreviewPane(props: {
                 when={line.kind !== "separator"}
                 fallback={<box height={1} />}
               >
-                <text
-                  fg={
-                    line.isMatch
-                      ? theme.accent
-                      : line.kind === "role"
-                        ? theme.primary
-                        : theme.text
-                  }
-                  attributes={line.kind === "role" ? TextAttributes.BOLD : undefined}
-                  wrapMode="word"
-                >
-                  <For each={line.isMatch ? highlightSegments(line.text || " ", props.query) : [{ text: line.text || " ", highlight: false }]}>
-                    {(segment) => (
-                      <span
-                        style={
-                          segment.highlight
-                            ? { fg: theme.selectedListItemText, bg: theme.accent }
-                            : { fg: line.isMatch ? theme.text : line.kind === "role" ? theme.primary : theme.text }
+                <Show
+                  when={line.kind === "attachment" && line.attachment}
+                  fallback={
+                    <text
+                      fg={previewLineColor(theme, line)}
+                      attributes={line.kind === "role" || line.kind === "title" ? TextAttributes.BOLD : undefined}
+                      wrapMode="word"
+                    >
+                      <For
+                        each={
+                          line.isMatch
+                            ? highlightSegments(previewLineText(line) || " ", props.query, line.highlights)
+                            : [{ text: previewLineText(line) || " ", highlight: false }]
                         }
                       >
-                        {segment.text}
-                      </span>
-                    )}
-                  </For>
-                </text>
+                        {(segment) => (
+                          <span
+                            style={
+                              segment.highlight
+                                ? { fg: theme.selectedListItemText, bg: theme.accent }
+                                : { fg: line.isMatch ? theme.text : previewLineColor(theme, line) }
+                            }
+                          >
+                            {segment.text}
+                          </span>
+                        )}
+                      </For>
+                    </text>
+                  }
+                >
+                  <text wrapMode="none">
+                    <span style={{ bg: attachmentBadgeColor(theme, line.attachment?.mime), fg: theme.background }}>
+                      {` ${line.attachment?.badge ?? "file"} `}
+                    </span>
+                    <span style={{ bg: theme.backgroundElement, fg: line.isMatch ? theme.accent : theme.textMuted }}>
+                      {` ${line.attachment?.label ?? "attachment"} `}
+                    </span>
+                  </text>
+                </Show>
               </Show>
             )}
           </For>
@@ -390,6 +481,12 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
     const q = query()
     const m = mode()
     if (timer) clearTimeout(timer)
+    // Empty queries are the recency listing - refresh immediately so opening
+    // the picker and clearing a search both feel instant.
+    if (!q.trim()) {
+      void refresh(q, m)
+      return
+    }
     timer = setTimeout(() => void refresh(q, m), SEARCH_DEBOUNCE_MS)
   })
 
@@ -473,25 +570,49 @@ function SmartSessionDialog(props: { api: TuiPluginApi }) {
   })
 
   const options = () =>
-    sessions().map((s) => ({
-      title: s.title,
-      value: s.id,
-      category: dateCategory(s.updated),
-      footer: timeFooter(s.updated),
-    }))
+    sessions().map((s): SessionOption => {
+      const status = props.api.state.session.status(s.id)
+      return {
+        title: s.title,
+        value: s.id,
+        category: dateCategory(s.updated),
+        gutter: isWorkingStatus(status) ? () => <Spinner api={props.api} /> : undefined,
+      }
+    })
+
+  const currentSessionID = () => {
+    const route = props.api.route.current
+    return route.name === "session" && typeof route.params?.sessionID === "string" ? route.params.sessionID : undefined
+  }
 
   const { DialogSelect } = props.api.ui
+  const panel = () => opaque(props.api.theme.current.backgroundPanel)
 
   return (
-    <box flexDirection="column">
-      <box flexDirection="row" height={pickerHeight()} flexShrink={0}>
-        <box flexGrow={3} flexBasis={0} height={pickerHeight()} flexShrink={0}>
+    <box
+      flexDirection="column"
+      backgroundColor={panel()}
+      gap={1}
+      paddingLeft={DIALOG_PADDING_X}
+      paddingRight={DIALOG_PADDING_X}
+      paddingTop={DIALOG_PADDING_Y}
+      paddingBottom={DIALOG_PADDING_Y}
+    >
+      <box
+        flexDirection="row"
+        height={pickerHeight()}
+        flexShrink={0}
+        gap={DIALOG_PANE_GAP}
+        backgroundColor={panel()}
+      >
+        <box flexGrow={3} flexBasis={0} height={pickerHeight()} flexShrink={0} backgroundColor={panel()}>
           <DialogSelect
             title={`Sessions · ${mode()}`}
             placeholder={`Search with ${mode()}...`}
             options={options()}
             skipFilter={true}
             onFilter={updateQuery}
+            current={currentSessionID()}
             onMove={(opt: { value: string }) => {
               setSelectedSessionID(opt.value)
               loadPreview(opt.value)
@@ -536,6 +657,7 @@ const tui: TuiPlugin = async (api) => {
   }
 
   api.keymap.registerLayer({
+    priority: 1000,
     commands: [
       {
         namespace: "palette",
@@ -548,6 +670,11 @@ const tui: TuiPlugin = async (api) => {
         run: openSmartSessionDialog,
       },
     ],
+    bindings: api.tuiConfig.keybinds.get("session.list").map((binding) => ({
+      ...binding,
+      cmd: openSmartSessionDialog,
+      desc: binding.desc ?? "Switch session",
+    })),
   })
 }
 

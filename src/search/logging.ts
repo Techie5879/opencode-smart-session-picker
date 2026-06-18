@@ -7,6 +7,14 @@ const SERVICE = "smart-session-picker"
 
 let sequence = 0
 
+function boolEnv(value: string | undefined) {
+  return value === "1" || value === "true" || value === "yes"
+}
+
+function debugLoggingEnabled() {
+  return boolEnv(process.env.OPENCODE_SMART_PICKER_DEBUG) || boolEnv(process.env.OPENCODE_SMART_PICKER_PERF)
+}
+
 export function nextLogID(prefix: string) {
   sequence += 1
   return `${prefix}-${sequence}`
@@ -75,12 +83,16 @@ export function logEvent(
   message: string,
   extra: Record<string, unknown> = {},
 ) {
+  // Debug events fire per keystroke; only ship them over HTTP when debug
+  // logging is explicitly enabled.
+  if (level === "debug" && !debugLoggingEnabled()) return
+  const effectiveLevel = level === "debug" && debugLoggingEnabled() ? "info" : level
   void api.client.app
     .log({
       service: SERVICE,
-      level,
+      level: effectiveLevel,
       message,
-      extra,
+      extra: effectiveLevel === level ? extra : { ...extra, originalLevel: level },
     })
     .catch(() => {
       // Logging must never break the picker.
