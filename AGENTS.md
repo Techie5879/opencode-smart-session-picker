@@ -8,9 +8,11 @@ This repo is a prototype OpenCode TUI plugin that replaces the built-in session 
 
 - Use `bun install` for dependencies.
 - Use `bun run typecheck` for TypeScript validation.
-- Use `bun run test` for the repo check suite. Right now this intentionally runs `tsc --noEmit`.
+- Use `bun run test` for the repo check suite: `tsc --noEmit` plus the integration tests under `test/integration`.
 - `bunfig.toml` ignores `upstream/**` for bare Bun test discovery so submodule tests are not collected accidentally.
 - Use `bun run dev:opencode -- <workspace>` to launch the plugin in upstream OpenCode without touching the user's real OpenCode config/state.
+- Use `bun run test:perf` for deterministic fuzzy-search performance checks.
+- Use `bun run test:perf:live` for opt-in readonly fuzzy-search benchmarks against the real local OpenCode database.
 
 ## Disposable OpenCode Plugin Testing
 
@@ -42,6 +44,18 @@ Current one-time local disposable theme copied for this machine: `lucent-orng` i
 
 Because the dev run isolates XDG data/state too, it will not show the user's real OpenCode sessions. That is intentional for safe plugin testing. Do not remove that isolation unless a task explicitly asks to test against real local OpenCode data.
 
+## Real Local OpenCode Performance Testing
+
+Only use the user's real OpenCode install when a task explicitly asks for real local database or live TUI comparison. Treat the user's global OpenCode configuration and status/state as read-only: do not edit `~/.config/opencode`, do not change installed plugin config, and do not mutate real session data to set up a test.
+
+Allowed explicit workflows:
+
+- Run readonly performance tests with `bun run test:perf:live`. The live benchmark requires `OPENCODE_SMART_PICKER_PERF_WORKSPACE` to point at a busy local workspace; it reads the real OpenCode SQLite database in readonly mode, filters to that workspace, and writes benchmark sidecar DBs only under the system temp directory.
+- Use an existing tmux session/window or create a new tmux window to launch real `opencode <busy-workspace>` for manual TUI timing when the plugin is already installed. Keep any manual interaction limited to opening the session picker and running searches needed for performance measurement.
+- For disposable plugin isolation, prefer `bun run dev:opencode -- <busy-workspace>`. For real installed-plugin comparison, do not copy or rewrite config; launch the existing real OpenCode setup as-is.
+
+The live fuzzy-search benchmark should choose terms from the local OpenCode DB at runtime to cover high-hit and low-hit behavior. Do not commit real workspace paths, record IDs, session IDs, customer/project identifiers, or sampled query terms into this public repo.
+
 ## Boundaries
 
 - Do not run tests inside `upstream/opencode` or `upstream/opentui` as part of this repo's normal checks.
@@ -60,4 +74,6 @@ Because the dev run isolates XDG data/state too, it will not show the user's rea
 - Search implementation lives under `src/search/`. Keep `src/tui.tsx` as a thin OpenTUI dialog wrapper around `searchSessions`, the mode selector, dependency status chips, and the session result list.
 - The only OpenCode override is the built-in session picker command path and its related dialog. Do not add extra command palette entries, routes, keybind overrides, storage mutations, or config reads unless a task explicitly asks for them.
 - Use OpenCode SDK/plugin types for OpenCode-owned data. Local types are allowed only for plugin-owned sidecar documents, ranking diagnostics, dependency health, and search configuration.
+- The sidecar cache uses one shared connection (`openSharedSidecar`) with WAL + busy_timeout, and incremental session-level reindexing through `indexDelta`/`upsertSessions`. Do not reintroduce per-search `SearchSidecar.open` calls, per-keystroke meta writes, or full-corpus rebuilds on every invalidation event.
+- External-content FTS5 rows must mirror the `document` content table exactly; clearing goes through the FTS5 `delete-all` command. Mismatched values corrupt the index (see the rebuild regression test).
 - Keep `src/tui.tsx` lean: local code should exist only where OpenCode does not expose the native picker internals through the plugin API, or where the semantic search feature needs plugin-owned sidecar behavior.

@@ -10,7 +10,9 @@
   "scripts": {
     "dev:opencode": "bun run scripts/dev-opencode.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun run typecheck && bun test test/integration"
+    "test": "bun run typecheck && bun test test/integration",
+    "test:perf": "bun test test/performance",
+    "test:perf:live": "OPENCODE_SMART_PICKER_LIVE_PERF=1 bun test test/performance"
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.14.50",
